@@ -1,0 +1,5 @@
+# Copy to config.toml (gitignored) and fill in this machine's paths.
+# Mesen 2 executable. Its folder is also Mesen's home (settings.json, Saves/) for a
+# portable/winget install; set `home` if yours differs.
+mesen = 'C:\path\to\Mesen.exe'
+# home = 'C:\path\to\Mesen'
