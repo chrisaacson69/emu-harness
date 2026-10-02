@@ -25,6 +25,9 @@
 --   read <memType> <addr> <len> -> hex bytes (memType is an emu.memType name, e.g. nesDebug)
 --   save                     -> hex of a savestate taken at this frame boundary
 --   load <hex>               -> restore it; frame=<n> (the frame counter rewinds with it)
+--   trace <memType> <addr> <len> <path>[|<flagAddr>] -> from now on, at every endFrame append
+--                               1 flag byte (flagAddr was read this frame) + len bytes; ok
+--   trace off                -> close the trace file; ok
 --   quit                     -> bye, then emu.stop(0)
 
 local socket = require("socket.core")
@@ -62,7 +65,34 @@ local function fromhex(h)
   return (h:gsub("%x%x", function(x) return string.char(tonumber(x, 16)) end))
 end
 
-local saved_frames = {}  -- savestate blob -> frame number it was taken at
+-- Per-frame memory trace, written at each endFrame: 1 flag byte (was `flagAddr` read
+-- during the frame; 0 if no flag address given) + `len` bytes from `addr`.
+local trace = nil
+
+local function trace_open(mt, addr, len, path, flagAddr)
+  local memType = assert(emu.memType[mt], "trace: unknown memType " .. tostring(mt))
+  trace = { memType = memType, addr = addr, len = len, f = assert(io.open(path, "wb")),
+            read = false, buf = {} }
+  if flagAddr then
+    trace.flagAddr = flagAddr
+    trace.cb = emu.addMemoryCallback(function() trace.read = true end,
+      emu.callbackType.read, flagAddr, flagAddr)
+  end
+end
+
+local function trace_close()
+  if not trace then return end
+  if trace.cb then emu.removeMemoryCallback(trace.cb, emu.callbackType.read, trace.flagAddr, trace.flagAddr) end
+  trace.f:close()
+  trace = nil
+end
+
+local function trace_frame()
+  local b, a, mt = trace.buf, trace.addr, trace.memType
+  for i = 1, trace.len do b[i] = emu.read(a + i - 1, mt) end
+  trace.f:write(string.char(trace.read and 1 or 0), string.char(table.unpack(b, 1, trace.len)))
+  trace.read = false
+end
 
 -- Returns true when the client asked to run frames (leave the callback and emulate).
 local function handle(line)
@@ -115,7 +145,20 @@ local function handle(line)
     emu.loadSavestate(fromhex(rest:sub(9)))
     queue, qhead, applied = {}, 1, false
     send("frame=" .. frame)
+  elseif cmd == "trace" then
+    if rest == "off" then
+      trace_close()
+    else
+      local mt, a, l, path = rest:match("^(%S+)%s+(%d+)%s+(%d+)%s+(.+)$")
+      assert(path, "trace: usage trace <memType> <addr> <len> <path> | trace off")
+      local p, fa = path:match("^(.-)%s*|%s*(%d+)$")
+      if p then path = p end
+      trace_close()
+      trace_open(mt, tonumber(a), tonumber(l), path, tonumber(fa))
+    end
+    send("ok")
   elseif cmd == "quit" then
+    trace_close()
     send("bye")
     conn:close()
     emu.stop(0)
@@ -167,6 +210,7 @@ end, emu.eventType.inputPolled)
 
 emu.addEventCallback(function()
   frame = frame + 1
+  if trace then trace_frame() end
   -- A mask is consumed by an inputPolled, not by a frame: the partial frame from
   -- power-on to the first endFrame has no inputPolled, so it must not eat mask #1.
   if applied then qhead = qhead + 1; applied = false end

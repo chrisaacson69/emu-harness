@@ -47,7 +47,8 @@ class Mesen:
     """
 
     def __init__(self, rom: Path, *, keys: list[str], port: int = 0, headless: bool = True,
-                 run_timeout_s: int = 86400, config: dict | None = None, log_dir: Path | None = None):
+                 run_timeout_s: int = 86400, config: dict | None = None, log_dir: Path | None = None,
+                 switches: list[str] = ()):
         cfg = config or load_config()
         self.rom = Path(rom)
         self.keys = list(keys)
@@ -60,6 +61,9 @@ class Mesen:
         args = [str(cfg["mesen"])]
         if headless:
             args += ["--testRunner", f"--timeout={run_timeout_s}"]
+        # Mesen config overrides, e.g. "--Nes.RamPowerOnState=AllOnes". Only bool/enum settings
+        # and numbers with a [MinMax] range apply; others are silently ignored (ConfigManager.cs).
+        args += list(switches)
         args += [str(BRIDGE_LUA), str(self.rom)]
         log_dir = log_dir or REPO / "_scratch"
         log_dir.mkdir(exist_ok=True)
@@ -138,6 +142,18 @@ class Mesen:
     def load(self, state: str) -> int:
         self.input_log_valid = False
         return self._frame(self.cmd(f"load {state}"))
+
+    def trace(self, mem_type: str, addr: int, length: int, path: Path,
+              flag_addr: int | None = None) -> None:
+        """Append, at every endFrame from now on, 1 flag byte (flag_addr read during the frame)
+        + `length` bytes from `addr` to `path`. trace_off() closes it."""
+        spec = f"{mem_type} {addr} {length} {Path(path)}"
+        if flag_addr is not None:
+            spec += f"|{flag_addr}"
+        self.cmd("trace " + spec)
+
+    def trace_off(self) -> None:
+        self.cmd("trace off")
 
     def input_keys(self, port: int = 0) -> list[str]:
         return self.cmd(f"inputkeys {port}").split(",")
