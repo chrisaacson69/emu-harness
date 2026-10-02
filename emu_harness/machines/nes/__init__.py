@@ -1,16 +1,11 @@
-"""nes-harness: the NES layer over mesen-harness (pad map, battery wipe, RAM reads)."""
+"""NES machine layer (pad map, battery wipe, RAM reads), currently bound to the Mesen backend."""
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
-try:
-    import mesen_harness
-except ImportError:  # sibling checkout convention: ../mesen-harness
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "mesen-harness"))
-    import mesen_harness
-
-from mesen_harness import Mesen, load_config, save_files
+# Known coupling: NES subclasses the Mesen backend, and wipe_battery knows Mesen's
+# Saves/ folder. Split it when a second backend gets a Python client (see CLAUDE.md).
+from ...backends.mesen import Mesen, load_config, save_files
 
 # Standard pad names (as written in input logs) -> Mesen getInput() names.
 # Verified against Mesen 2.2.1 getInput(0): a,b,down,left,right,select,start,up.

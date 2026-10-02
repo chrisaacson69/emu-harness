@@ -1,6 +1,6 @@
 """Python side of the Mesen 2 bridge: launch Mesen with bridge.lua and drive it in lockstep.
 
-Console-agnostic. A console layer (e.g. nes-harness) supplies the button names, the
+Machine-agnostic. A machine layer (e.g. emu_harness.machines.nes) supplies the button names, the
 memory type to read and any battery-save handling.
 """
 from __future__ import annotations
@@ -12,8 +12,8 @@ import time
 import tomllib
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
-BRIDGE_LUA = REPO / "bridge.lua"
+REPO = Path(__file__).resolve().parents[3]
+BRIDGE_LUA = Path(__file__).resolve().parent / "bridge.lua"
 
 
 def load_config(path: Path | None = None) -> dict:

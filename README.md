@@ -1,13 +1,23 @@
-# mesen-harness
+# emu-harness
 
-A console-agnostic harness that drives the [Mesen 2](https://github.com/SourMesen/Mesen2)
-emulator from Python: a Lua socket bridge running inside Mesen, in lockstep with a
-Python client that sends inputs, advances frames, saves/loads state and reads RAM.
+Drive emulators from Python in lockstep: send inputs, advance frames, save/load
+state, read RAM, and replay input logs from power-on. Built for replay verification,
+search and testing of game AI.
 
-This is the **core** layer. Console layers (e.g. `nes-harness`) and game
-adapters build on it. See `CLAUDE.md` for the layering and the rules.
+Emulators (**backends**) and consoles (**machines**) are independent plug-ins:
 
-**Status:** scaffold. The first milestone is replaying a known Zelda (NES) input log
-from power-on and matching its recorded end state.
+| | Status |
+|---|---|
+| `backends/mesen` | [Mesen 2](https://github.com/SourMesen/Mesen2): Lua socket bridge + Python client, headless via `--testRunner`, per-frame RAM trace |
+| `backends/bizhawk` | [BizHawk](https://github.com/TASEmulators/BizHawk): `.bk2` movie RAM-trace script (reference oracle for cross-emulator drift) |
+| `machines/nes` | pad map, battery-save wipe, power-on RAM fill |
 
-No ROMs are included; you supply your own.
+Tools: `tools/replay_log.py` (replay an input log, report RAM SHA-1) and
+`tools/trace_diff.py` (find where two per-frame RAM traces diverge).
+
+Game adapters live in each game's own repo. See `CLAUDE.md` for the layout and rules.
+
+Setup: copy `config.example.toml` to `config.toml` and set this machine's paths.
+Requires Python 3.11+ (`tomllib`). No ROMs are included; you supply your own.
+
+*Formerly `mesen-harness` + `nes-harness` (merged 2026-10-02).*

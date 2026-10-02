@@ -1,5 +1,5 @@
 """Compare two per-frame RAM traces (record = 1 flag byte + 2048 bytes RAM) and find where
-they first diverge. Format written by tools/bizhawk/trace_bk2.lua and the mesen-harness
+they first diverge. Format written by emu_harness/backends/bizhawk/trace_bk2.lua and the Mesen
 bridge `trace` command (replay_log.py --trace).
 
   py -3.14 tools/trace_diff.py <reference.bin> <candidate.bin> [--shift auto|N]

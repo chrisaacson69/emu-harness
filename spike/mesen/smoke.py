@@ -4,8 +4,8 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from mesen_harness import Mesen
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from emu_harness.backends.mesen import Mesen
 
 rom = Path(sys.argv[1])
 with Mesen(rom, keys=["up", "down", "left", "right", "select", "start", "b", "a"]) as m:
