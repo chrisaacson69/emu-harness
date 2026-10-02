@@ -31,9 +31,13 @@ def wipe_battery(rom: Path, config: dict | None = None) -> list[Path]:
 class NES(Mesen):
     """A Mesen instance with the NES pad map; power-on from a wiped battery by default."""
 
-    def __init__(self, rom: Path, *, clean_battery: bool = True, **kw):
+    def __init__(self, rom: Path, *, clean_battery: bool = True, ram_power_on: str | None = None, **kw):
+        """ram_power_on: AllZeros | AllOnes | Random (Mesen's RamState). BizHawk's quickerNES
+        powers on with RAM all 0xFF, so replaying its movies needs AllOnes."""
         if clean_battery:
             wipe_battery(rom, kw.get("config"))
+        if ram_power_on:
+            kw["switches"] = [*kw.get("switches", ()), f"--Nes.RamPowerOnState={ram_power_on}"]
         super().__init__(rom, keys=KEYS, **kw)
 
     def ram(self, addr: int, length: int = 1) -> bytes:

@@ -7,6 +7,7 @@ final state plus a SHA-1 of system RAM ($0000-$07FF).
          [--watch name=0xADDR ...] [--offset K]
 
 --offset K drops (K>0) or prepends K blank frames (K<0) to test frame alignment.
+Against BizHawk movies, --offset -1 aligns (verified on AIBeatsZelda run 6, 2026-10-02).
 """
 import argparse
 import hashlib
@@ -26,6 +27,10 @@ def main() -> int:
     ap.add_argument("--every", type=int, default=600)
     ap.add_argument("--watch", nargs="*", default=[], help="name=0xADDR")
     ap.add_argument("--offset", type=int, default=0)
+    ap.add_argument("--ram", choices=["AllZeros", "AllOnes", "Random"],
+                    help="Mesen power-on RAM fill (BizHawk quickerNES = AllOnes)")
+    ap.add_argument("--trace", type=Path, help="write a per-frame trace: 1 byte $4016-read flag "
+                    "(0 = lag frame) + 2048 bytes of system RAM, at every endFrame")
     a = ap.parse_args()
 
     frames = read_input_log(a.log)
@@ -38,8 +43,10 @@ def main() -> int:
     watch = [(n, int(v, 0)) for n, v in (w.split("=") for w in a.watch)]
 
     t0 = time.perf_counter()
-    with NES(a.rom) as m:
+    with NES(a.rom, ram_power_on=a.ram) as m:
         masks = [m.mask_from_names(f) for f in frames]
+        if a.trace:
+            m.trace("nesDebug", 0, 0x800, a.trace.resolve(), flag_addr=0x4016)
 
         def show(done):
             vals = " ".join(f"{n}={m.ram(addr)[0]}" for n, addr in watch)
