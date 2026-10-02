@@ -2,9 +2,20 @@
 
 From a checkpoint, run N sampled input segments (in parallel, one emulator per worker),
 judge each with the game adapter, keep the best survivor as the next checkpoint, and back
-up one segment when every candidate dies. Every kept segment is appended to one input log
-that starts at power-on, so the result replays from scratch (the independent check: a
-fresh instance, no savestates).
+up when every candidate dies. Kept segments form one input sequence that, after each
+seed's boot prefix, replays from power-on (the independent check: a fresh instance, no
+savestates).
+
+Seeds. A checkpoint holds one savestate per *seed*: the same game position reached from
+different hidden state (e.g. a frame-counter phase). A candidate is played on every seed
+with the same inputs; it survives only if it survives on all of them, scores its worst
+seed, and reaches the goal only when every seed does. One seed = a TAS for that seed;
+several = a policy that does not depend on the seed.
+
+Time. When a candidate reaches the goal, its segment is cut at the first frame where the
+goal holds on every seed, and goal candidates rank by that frame. `search(bound=...)`
+abandons a run as soon as it cannot beat a known time, so restarts with fresh search
+seeds only ever improve the best.
 
 Emulator- and game-agnostic. The caller supplies:
   make_client()      -> a started client with save/load/run_masks/close
@@ -32,21 +43,23 @@ class Verdict:
 
 @dataclass
 class Checkpoint:
-    state: str
-    log_len: int                # input-log length (frames since power-on) at this state
-    obs: Any
+    states: list[str]           # one savestate per seed
+    frames: int                 # frames played since the start states
+    obs: list[Any]              # one observation per seed
     score: float
     fails: int = 0              # times every candidate from here died
 
 
 @dataclass
 class Result:
-    log: list[int]
+    inputs: list[int]           # one mask per frame from the start states (same for every seed)
     checkpoints: list[Checkpoint]
     goal: bool
+    goal_frame: int | None      # frames from the start states to the goal, if reached
     candidates_run: int
     backtracks: int
     seconds: float
+    pruned: bool = False        # stopped because it could not beat the bound
     history: list[str] = field(default_factory=list)
 
 
@@ -65,17 +78,20 @@ class _Pool:
             job = self.jobs.get()
             if job is None:
                 return
-            fn, out = job
+            fn, i, out = job
             try:
-                out.put(fn(client))
+                out.put((i, fn(client)))
             except Exception as e:      # surface worker errors to the caller
-                out.put(e)
+                out.put((i, e))
 
-    def map(self, fn_list):
+    def map(self, fns):
         out: queue.Queue = queue.Queue()
-        for fn in fn_list:
-            self.jobs.put((fn, out))
-        results = [out.get() for _ in fn_list]
+        for i, fn in enumerate(fns):
+            self.jobs.put((fn, i, out))
+        results = [None] * len(fns)
+        for _ in fns:
+            i, r = out.get()
+            results[i] = r
         for r in results:
             if isinstance(r, Exception):
                 raise r
@@ -90,60 +106,131 @@ class _Pool:
             c.close()
 
 
-def segment_search(make_client, adapter, *, start_state: str, start_log: list[int],
-                   candidates: int = 32, workers: int = 8, max_segments: int = 1000,
-                   max_fails: int = 3, seed: int = 0, max_seconds: float = 3600,
-                   probe_top: int = 4, probe_samples: int = 8,
-                   progress: Callable[[str], None] = print) -> Result:
-    """start_state/start_log: a savestate and the power-on input log that reaches it."""
-    rng = random.Random(seed)
-    pool = _Pool(make_client, workers)
-    t0 = time.perf_counter()
-    run = backtracks = 0
-    history: list[str] = []
-    try:
-        def observe_start(c):
-            c.load(start_state)
-            return adapter.observe(c)
-        base_obs = pool.map([observe_start])[0]
-        stack = [Checkpoint(start_state, len(start_log), base_obs, 0.0)]
+class Searcher:
+    """Owns the emulator pool, so restarts reuse running instances."""
+
+    def __init__(self, make_client, adapter, *, workers: int = 8):
+        self.adapter = adapter
+        self.pool = _Pool(make_client, workers)
+
+    def close(self):
+        self.pool.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+    # -- one candidate on every seed ----------------------------------------------
+    def _play(self, cp: Checkpoint, masks_list: list[list[int]], keep_state: bool):
+        """Play each mask list from every seed of cp. Returns per list: [(obs, verdict, state)]."""
+        ad = self.adapter
+
+        def job(st, base, masks):
+            def fn(c):
+                c.load(st)
+                c.run_masks(masks)
+                obs = ad.observe(c)
+                return obs, ad.judge(obs, base), (c.save() if keep_state else None)
+            return fn
+
+        n = len(cp.states)
+        flat = self.pool.map([job(st, base, m) for m in masks_list
+                              for st, base in zip(cp.states, cp.obs)])
+        return [flat[i * n:(i + 1) * n] for i in range(len(masks_list))]
+
+    def _goal_frame(self, cp: Checkpoint, masks: list[int]) -> int:
+        """First frame count (1-based, within masks) at which the goal holds on every seed."""
+        ad = self.adapter
+
+        def job(st, base):
+            def fn(c):
+                c.load(st)
+                for f, m in enumerate(masks, 1):
+                    c.run_masks([m])
+                    if ad.judge(ad.observe(c), base).goal:
+                        return f
+                return len(masks)
+            return fn
+
+        return max(self.pool.map([job(st, base) for st, base in zip(cp.states, cp.obs)]))
+
+    def _cut(self, cp: Checkpoint, masks: list[int]):
+        """Re-play masks on every seed and keep the end states (for a trimmed goal segment)."""
+        (per_seed,) = self._play(cp, [masks], keep_state=True)
+        return per_seed
+
+    # -- the search -----------------------------------------------------------------
+    def search(self, start_states: list[str], *, candidates: int = 32, max_segments: int = 1000,
+               max_fails: int = 3, seed: int = 0, max_seconds: float = 3600,
+               probe_top: int = 4, probe_samples: int = 8, bound: int | None = None,
+               progress: Callable[[str], None] = print) -> Result:
+        """start_states: one savestate per seed, all at the same game position.
+        bound: a known goal frame to beat; the run stops once it cannot."""
+        ad = self.adapter
+        rng = random.Random(seed)
+        t0 = time.perf_counter()
+        run = backtracks = 0
+        history: list[str] = []
+
+        def say(msg):
+            progress(msg)
+            history.append(msg)
+
+        def observe_start(st):
+            def fn(c):
+                c.load(st)
+                return ad.observe(c)
+            return fn
+
+        base_obs = self.pool.map([observe_start(st) for st in start_states])
+        stack = [Checkpoint(list(start_states), 0, base_obs, 0.0)]
         segs: list[list[int]] = []          # segs[i] leads from stack[i] to stack[i+1]
-        goal = False
+        goal_frame = None
+        pruned = False
         while len(segs) < max_segments and time.perf_counter() - t0 < max_seconds:
             top = stack[-1]
-            samples = [adapter.sample(rng) for _ in range(candidates)]
-
-            def job(masks, st=top.state, base=top.obs):
-                def fn(c):
-                    c.load(st)
-                    c.run_masks(masks)
-                    obs = adapter.observe(c)
-                    return masks, obs, adapter.judge(obs, base), c.save()
-                return fn
-
-            results = pool.map([job(m) for m in samples])
-            run += len(results)
-            alive = [r for r in results if not r[2].dead]
-            alive.sort(key=lambda r: r[2].score, reverse=True)
-            pick = alive[0] if alive else None
-            if alive and probe_top and probe_samples and not alive[0][2].goal:
-                # Look ahead: a candidate that survives its own segment can still end where
-                # every continuation dies (and greedy re-picks it after each backtrack).
-                # Keep the best-scoring of the top few that has a surviving continuation.
-                top_k = alive[:probe_top]
-
-                def probe(st, obs0, masks):
-                    def fn(c):
-                        c.load(st)
-                        c.run_masks(masks)
-                        return not adapter.judge(adapter.observe(c), obs0).dead
-                    return fn
-
-                jobs = [probe(r[3], r[1], adapter.sample(rng)) for r in top_k for _ in range(probe_samples)]
-                ok = pool.map(jobs)
-                run += len(jobs)
-                pick = next((r for i, r in enumerate(top_k)
-                             if any(ok[i * probe_samples:(i + 1) * probe_samples])), None)
+            if bound is not None and top.frames >= bound:
+                pruned = True
+                say(f"  frame {top.frames} reached the bound {bound} without the goal; stop")
+                break
+            samples = [ad.sample(rng) for _ in range(candidates)]
+            results = self._play(top, samples, keep_state=True)
+            run += len(results) * len(top.states)
+            alive = []
+            for masks, per_seed in zip(samples, results):
+                vs = [v for _, v, _ in per_seed]
+                if any(v.dead for v in vs):
+                    continue
+                score = min(v.score for v in vs)
+                alive.append((score, all(v.goal for v in vs), masks, per_seed))
+            pick = None
+            goals = [a for a in alive if a[1]]
+            if goals:
+                # Time: among candidates that reach the goal, the earliest goal frame wins.
+                timed = [(self._goal_frame(top, a[2]), a) for a in goals]
+                f, a = min(timed, key=lambda t: t[0])
+                masks = a[2][:f]
+                per_seed = self._cut(top, masks)
+                pick = (a[0], True, masks, per_seed)
+            elif alive:
+                alive.sort(key=lambda a: a[0], reverse=True)
+                pick = alive[0]
+                if probe_top and probe_samples:
+                    # Look ahead: a candidate that survives its own segment can still end where
+                    # every continuation dies (and greedy re-picks it after each backtrack).
+                    # Keep the best-scoring of the top few with a continuation that survives
+                    # on every seed.
+                    top_k = alive[:probe_top]
+                    probes = [ad.sample(rng) for _ in range(probe_samples)]
+                    ok_for = []
+                    for a in top_k:
+                        cp = Checkpoint([s for _, _, s in a[3]], 0, [o for o, _, _ in a[3]], 0.0)
+                        res = self._play(cp, probes, keep_state=False)
+                        run += len(probes) * len(cp.states)
+                        ok_for.append(any(not any(v.dead for _, v, _ in r) for r in res))
+                    pick = next((a for a, ok in zip(top_k, ok_for) if ok), None)
             if pick is None:
                 top.fails += 1
                 if top.fails >= max_fails and len(stack) > 1:
@@ -154,21 +241,18 @@ def segment_search(make_client, adapter, *, start_state: str, start_log: list[in
                         segs.pop()
                         stack[-1].fails += 1
                         backtracks += 1
-                    msg = f"  dead end x{max_fails}; back up to segment {len(segs)}"
-                    progress(msg)
-                    history.append(msg)
+                    say(f"  dead end x{max_fails}; back up to segment {len(segs)}")
                 continue
-            masks, obs, verdict, state = pick
+            score, is_goal, masks, per_seed = pick
             segs.append(masks)
-            stack.append(Checkpoint(state, top.log_len + len(masks), obs, verdict.score))
-            msg = (f"seg {len(segs):>4}  frame {stack[-1].log_len:>6}  alive {len(alive):>2}/{candidates}"
-                   f"  {adapter.describe(obs)}  [{time.perf_counter() - t0:.0f}s]")
-            progress(msg)
-            history.append(msg)
-            if verdict.goal:
-                goal = True
+            obs = [o for o, _, _ in per_seed]
+            stack.append(Checkpoint([s for _, _, s in per_seed], top.frames + len(masks), obs, score))
+            worst = min(range(len(obs)), key=lambda i: per_seed[i][1].score)
+            say(f"seg {len(segs):>4}  frame {stack[-1].frames:>6}  alive {len(alive):>2}/{candidates}"
+                f"  {ad.describe(obs[worst])}  [{time.perf_counter() - t0:.0f}s]")
+            if is_goal:
+                goal_frame = stack[-1].frames
                 break
-        log = list(start_log) + [m for s in segs for m in s]
-        return Result(log, stack, goal, run, backtracks, time.perf_counter() - t0, history)
-    finally:
-        pool.close()
+        inputs = [m for s in segs for m in s]
+        return Result(inputs, stack, goal_frame is not None, goal_frame, run, backtracks,
+                      time.perf_counter() - t0, pruned, history)
