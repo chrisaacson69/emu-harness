@@ -43,6 +43,15 @@ class NES(Mesen):
         return self.mask(PAD[n] for n in names)
 
 
+def write_input_log(path: Path, masks: list[int], header: str = "") -> None:
+    """Inverse of read_input_log, from masks in KEYS bit order."""
+    names = {v: k for k, v in PAD.items()}
+    lines = [f"# {h}" for h in header.splitlines()]
+    for m in masks:
+        lines.append(",".join(names[k] for i, k in enumerate(KEYS) if m >> i & 1))
+    Path(path).write_text("\n".join(lines) + "\n")
+
+
 def read_input_log(path: Path) -> list[list[str]]:
     """One line per frame from power-on: a comma list of pad names, blank = no buttons.
     Lines starting with '#' are headers."""
