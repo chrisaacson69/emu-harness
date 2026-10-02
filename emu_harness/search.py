@@ -256,3 +256,124 @@ class Searcher:
         inputs = [m for s in segs for m in s]
         return Result(inputs, stack, goal_frame is not None, goal_frame, run, backtracks,
                       time.perf_counter() - t0, pruned, history)
+
+    # -- beam search ------------------------------------------------------------------
+    def beam_search(self, start_states: list[str], *, width: int = 8, per_node: int = 8,
+                    per_key: int = 1, max_steps: int = 1000, max_fails: int = 3, seed: int = 0,
+                    max_seconds: float = 3600, bound: int | None = None,
+                    progress: Callable[[str], None] = print) -> Result:
+        """Keep the best `width` checkpoints per step instead of one. Each node gets `per_node`
+        candidates; the next beam is the best survivors, at most `per_key` per
+        adapter.key(obs) (if the adapter has one), so distinct lines (e.g. different item
+        orders) survive side by side instead of collapsing onto the greedy one. Every node
+        is at the same frame count, so scores compare fairly on time. When a whole step
+        dies, it is resampled; after max_fails the search drops back one step."""
+        ad = self.adapter
+        keyf = getattr(ad, "key", None)
+        rng = random.Random(seed)
+        t0 = time.perf_counter()
+        run = backtracks = 0
+        history: list[str] = []
+
+        def say(msg):
+            progress(msg)
+            history.append(msg)
+
+        def observe_start(st):
+            def fn(c):
+                c.load(st)
+                return ad.observe(c)
+            return fn
+
+        base_obs = self.pool.map([observe_start(st) for st in start_states])
+        # a node: (checkpoint, inputs since the start states)
+        beams = [[(Checkpoint(list(start_states), 0, base_obs, 0.0), [])]]
+        fails = [0]
+        goal = None
+        pruned = False
+        while len(beams) - 1 < max_steps and time.perf_counter() - t0 < max_seconds:
+            beam = beams[-1]
+            frames = beam[0][0].frames
+            if bound is not None and frames >= bound:
+                pruned = True
+                say(f"  frame {frames} reached the bound {bound} without the goal; stop")
+                break
+            # one batch for the whole beam: per_node candidates per node, on every seed
+            plan = [(node, ad.sample(rng)) for node in beam for _ in range(per_node)]
+            n_seeds = len(start_states)
+            flat = self._play_many([(node[0], m) for node, m in plan])
+            run += len(plan) * n_seeds
+            alive, goals = [], []
+            for (node, masks), per_seed in zip(plan, flat):
+                vs = [v for _, v, _ in per_seed]
+                if any(v.dead for v in vs):
+                    continue
+                entry = (min(v.score for v in vs), node, masks, per_seed)
+                alive.append(entry)
+                if all(v.goal for v in vs):
+                    goals.append(entry)
+            if goals:
+                timed = [(self._goal_frame(e[1][0], e[2]), e) for e in goals]
+                f, e = min(timed, key=lambda t: t[0])
+                masks = e[2][:f]
+                per_seed = self._cut(e[1][0], masks)
+                cp = Checkpoint([s for _, _, s in per_seed], frames + f, [o for o, _, _ in per_seed], e[0])
+                goal = (cp, e[1][1] + masks)
+                say(f"step {len(beams):>4}  GOAL at frame {cp.frames}  "
+                    f"{ad.describe(cp.obs[0])}  [{time.perf_counter() - t0:.0f}s]")
+                break
+            if not alive:
+                fails[-1] += 1
+                if fails[-1] >= max_fails and len(beams) > 1:
+                    beams.pop()
+                    fails.pop()
+                    fails[-1] += 1
+                    backtracks += 1
+                    say(f"  whole beam died x{max_fails}; back up to step {len(beams) - 1}")
+                continue
+            alive.sort(key=lambda e: e[0], reverse=True)
+            nxt, per = [], {}
+            for score, node, masks, per_seed in alive:
+                obs = [o for o, _, _ in per_seed]
+                if keyf:
+                    k = keyf(obs[0])
+                    if per.get(k, 0) >= per_key:
+                        continue
+                    per[k] = per.get(k, 0) + 1
+                cp = Checkpoint([s for _, _, s in per_seed], frames + len(masks), obs, score)
+                nxt.append((cp, node[1] + masks))
+                if len(nxt) == width:
+                    break
+            beams.append(nxt)
+            fails.append(0)
+            best = nxt[0][0]
+            say(f"step {len(beams) - 1:>4}  frame {best.frames:>6}  alive {len(alive):>3}/{len(plan)}"
+                f"  beam {len(nxt)} ({len(per) if keyf else '-'} keys)  best: {ad.describe(best.obs[0])}"
+                f"  [{time.perf_counter() - t0:.0f}s]")
+        if goal:
+            cp, inputs = goal
+            return Result(inputs, [cp], True, cp.frames, run, backtracks,
+                          time.perf_counter() - t0, False, history)
+        cp, inputs = beams[-1][0]
+        return Result(inputs, [cp], False, None, run, backtracks, time.perf_counter() - t0,
+                      pruned, history)
+
+    def _play_many(self, jobs: list[tuple[Checkpoint, list[int]]]):
+        """Like _play, but each mask list has its own checkpoint. Returns per job:
+        [(obs, verdict, state)] over that checkpoint's seeds."""
+        ad = self.adapter
+
+        def job(st, base, masks):
+            def fn(c):
+                c.load(st)
+                c.run_masks(masks)
+                obs = ad.observe(c)
+                return obs, ad.judge(obs, base), c.save()
+            return fn
+
+        fns, spans = [], []
+        for cp, masks in jobs:
+            spans.append((len(fns), len(cp.states)))
+            fns += [job(st, base, masks) for st, base in zip(cp.states, cp.obs)]
+        flat = self.pool.map(fns)
+        return [flat[i:i + n] for i, n in spans]
