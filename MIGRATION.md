@@ -5,7 +5,7 @@ This ledger is the audit: what exists, which jobs are done more than once, where
 live, and how each move will be proven not to change output. It plays the role `MIGRATION.md`
 played for dj-score (vault: `research/dj-library-extraction.md`); the method is that page's §4.
 
-**Status (2026-10-22): audit done, step 0 (packaging) done. No tool has moved yet.**
+**Status (2026-10-22): audit done; step 0 (packaging) and row A (label export) done.**
 
 ## Why
 
@@ -128,7 +128,7 @@ to prove it fails.
    to fail on a planted violation. The three `sys.path` hacks pointing at emu-harness are gone
    (`tools/replay_log`, `spike/mesen/smoke`, game-annotation `mappy_search`). **Rule from here:**
    a tool that moves in is imported, never path-hacked, and the family runs on `py -3.14`.
-1. **A: label export.** 7 copies, byte-identical output, touches every layer once. Smallest real fold.
+1. ✅ **A: label export (2026-10-22).** See "Row A done" below.
 2. **D: native floor.** 7 forks → one profile-driven tool. The oracle is each title's current output.
 3. **E: matchers.** Dissolves the ro3k pseudo-library and its 7 hardcoded paths.
 4. **B/C/N: CPU + address model** for both consoles.
@@ -178,7 +178,54 @@ composite-face layout and the strategic attribute decode until each matches na1 
 STRUCTURE, settle the animation palette against an emulator frame, then retire the na1 copies.
 Nothing outside koei-nes imports `strategic_map` or `text` today, so fixing them breaks no consumer.
 
+## Row A done: label export (2026-10-22)
+
+**New:** `core/symbols.py` (Symbol + region vocabulary + registry reader that reports defects),
+`machines/nes/memory.py` (Cart from the iNES header; locate), `backends/mesen/labels.py` (Mesen's
+own export format), `tools/gen_mlb.py`, `tools/mlb_compare.py`, `tests/test_labels.py`.
+**Retired:** koei-nes `gen_mlb_nes.py` (committed once for history, then removed), Elite
+`gen_mlb.py`, UW `export_mlb.py`. **Rewired:** na1 `mesen-labels.py --mlb`, mappy `mappy_mlb.py`,
+koei-snes `gen_mlb.py` (keeps its module merge; writes through the shared writer).
+
+**Format, from Mesen 2's source** (CodeLabel / LabelManager): long type names, `X4` hex, comment
+omitted when blank, colons allowed in comments, newlines as `\n`, names must match
+`^[@_a-zA-Z]+[@_a-zA-Z0-9]*$`, and **the last label at a key wins** on import.
+
+**Oracle.** Bytes were the wrong oracle (dialects differ while Mesen shows the same thing), so
+`tools/mlb_compare.py` loads both files with Mesen's import rules. Golden = each old producer
+re-run on 2026-10-22 (koei-nes `ce4f291` + uncommitted `gen_mlb_nes.py`, na1, Elite, UW, mappy,
+koei-snes at their HEADs); 8 of 11 equalled the committed `.mlb`, the 3 others were stale
+commits (na1, UW: labels added since; Gemfire-snes: rot3k2's VM entries, a known fixed bug).
+
+| Title | Mesen labels old / new | Identical | Differences (all named) |
+|---|---|---:|---|
+| Elite | 1693 / 1693 | 1693 | none |
+| rot3k2-snes | 592 (+3 rejected) / 592 | 592 | 3 labels Mesen silently rejected are now reported |
+| LEmp, rot3k2, bk, GemFire, na2 | as before | 907–3066 | `:` restored in 1,899 comments (koei-nes wrote `;`); 548 comments no longer truncated by inner quotes (na2 538, bk 10); GemFire +1 label at `$9D2C` koei-nes skipped |
+| na1 | 1371 / 1371 | 1207 | 156 comments keep the game's line breaks; 8 conflicts (below) |
+| UW, Mappy, Gemfire-snes | | | 1 / 9 / 1 conflicts (below); Gemfire-snes had **47 labels Mesen rejected** (names starting with a digit), now reported |
+
+**What the registries hold that nobody could see (fix in A2; each needs a decision):**
+- **8 of 10 `mesen-labels.toml` are not valid TOML:** na2 538 bad lines, UW 244, bk 11, gk 2;
+  duplicate sections (bk 8, UW 5, ro3k 1); duplicate addresses (ro3k 45 same-name).
+- **Conflicting names for one address:** na1 `$C7C9` `music_next_voice`/`music_advance_voice` and
+  4 fixed-bank aliases; na2 `$603A` `blink_period`/`menu_box_enabled`; rot3k2 `$EF93`
+  `ext_mul32`/`umul32` + 2; GemFire `$A3F4` `unit_name_table`/`msg_horsemen`; UW bank 17
+  `fleet_leaf_8b0a` (`$8B0A`) vs `nat_17_0b0a` (`$AB0A`), one byte through two windows.
+- **Mappy's object record contradicts its variables:** `vars.toml` says `$0401` = `obj_y`, the
+  record template says +1 = `obj_x_hi` (9 bytes of the `$0400` object disagree).
+- **Gemfire-snes profile:** `vm_interp_loop` and `vm_run_entry` both `$2340`.
+- Mesen showed the *last* of each conflicting pair; the new writer keeps the *first* and prints
+  the clash, so the choice is visible until the registry is fixed.
+
+**Also found:** na1's `*_labeled.asm` are untracked since `2d2e7ef` although its `.gitignore`
+and `mesen-labels.py` say they are versioned (and this session's `--asm` run overwrote the
+stale untracked copies with a current regen; the last committed version is `2d2e7ef^`).
+
 ## Open questions (Chris)
+
+- **Row A2 decisions:** the conflicting names above (which name is right at each address), and
+  whether to repair the 8 registries to valid TOML (mechanical, provable with `mlb_compare`).
 
 - **nes-disasm6** (row B, deferred): still read by `asm-relabel` / `zp-harvest`?
 - **na1-snes-decompiler** has no vault pointer (it is now in the path resolver).

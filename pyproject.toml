@@ -28,6 +28,12 @@ testpaths = ["tests"]
 root_package = "emu_harness"
 
 [[tool.importlinter.contracts]]
+name = "Core is the bottom: it imports nothing else in the package"
+type = "forbidden"
+source_modules = ["emu_harness.core"]
+forbidden_modules = ["emu_harness.backends", "emu_harness.machines", "emu_harness.search"]
+
+[[tool.importlinter.contracts]]
 name = "Backends know no console"
 type = "forbidden"
 source_modules = ["emu_harness.backends"]
