@@ -41,6 +41,13 @@ class Cart:
         return cls(mapper, h[4] * 0x4000, bool(h[6] & 0x02))
 
 
+def fixed_bank(rom: bytes) -> bytes:
+    """The PRG mapped at $C000-$FFFF on the KOEI MMC1/MMC5 boards: the last 16 KiB of PRG.
+    (MMC1 fixes the last 16K bank there; KOEI's MMC5 titles map the last two 8K banks.)"""
+    prg = rom[16:16 + rom[4] * 0x4000]
+    return prg[-0x4000:]
+
+
 def locate(cart: Cart, section: str, addr: int) -> tuple[str, int] | None:
     """-> (region, offset), or None if a [prg.bankN] label is not a PRG address ($8000+) or
     falls outside the PRG image."""

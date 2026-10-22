@@ -130,7 +130,13 @@ to prove it fails.
    a tool that moves in is imported, never path-hacked, and the family runs on `py -3.14`.
 1. ✅ **A: label export (2026-10-22).** See "Row A done" below.
 2. **D: native floor.** 7 forks → one profile-driven tool. The oracle is each title's current output.
-3. **E: matchers.** Dissolves the ro3k pseudo-library and its 7 hardcoded paths.
+3. **E: matchers.** Dissolves the ro3k pseudo-library and its 7 hardcoded paths. *Generic half done
+   2026-10-22:* `cpu/m6502/signature.py` (relocation-invariant signature + best_match),
+   `machines/nes/memory.fixed_bank` (last 16K of PRG; `handler_match.bank15` was wrong on 512K UW and
+   128K Elite), `core/symbols.names_by_address`. ro3k `handler_match` delegates. Oracle: 19 consumer
+   outputs byte-identical (all 7 native_floor forks, table + `--toml`; handler_match x2;
+   native_match; GemFire multi_oracle; UW native_banks), and the 3 functions agree on all 10 ROMs and
+   registries. KOEI half (syscall-table decode, bc_match, multi-oracle naming) moves with D.
 4. **B/C/N: CPU + address model** for both consoles. *B started 2026-10-22, pulled forward because
    D and E import it:* koei-nes `disasm6502.py` moved to `emu_harness/cpu/m6502/disasm.py`, koei-nes
    keeps a re-export (all public names, checked). Oracle: `validate` vs NA1's committed `bank_15.asm`

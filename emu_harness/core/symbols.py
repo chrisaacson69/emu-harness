@@ -81,6 +81,15 @@ def _loose_unescape(s: str) -> str:
     return s.replace('\\"', '"').replace("\\n", "\n").replace("\\t", "\t").replace("\\\\", "\\")
 
 
+def names_by_address(registry: Registry) -> dict[int, str]:
+    """{CPU address: name}, ignoring sections; the first entry in file order wins.
+    Only meaningful where an address means one thing in every section (e.g. a fixed bank)."""
+    out: dict[int, str] = {}
+    for e in registry.entries:
+        out.setdefault(e.addr, e.name)
+    return out
+
+
 def toml_string(s: str) -> str:
     """A TOML basic string, escaped per the spec (the escaping the hand-written writers skipped)."""
     out = s.replace("\\", "\\\\").replace('"', '\\"')
