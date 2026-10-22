@@ -129,7 +129,7 @@ to prove it fails.
    (`tools/replay_log`, `spike/mesen/smoke`, game-annotation `mappy_search`). **Rule from here:**
    a tool that moves in is imported, never path-hacked, and the family runs on `py -3.14`.
 1. ✅ **A: label export (2026-10-22).** See "Row A done" below.
-2. **D: native floor.** 7 forks → one profile-driven tool. The oracle is each title's current output.
+2. ✅ **D: native floor (2026-10-22).** See "Row D done" below.
 3. **E: matchers.** Dissolves the ro3k pseudo-library and its 7 hardcoded paths. *Generic half done
    2026-10-22:* `cpu/m6502/signature.py` (relocation-invariant signature + best_match),
    `machines/nes/memory.fixed_bank` (last 16K of PRG; `handler_match.bank15` was wrong on 512K UW and
@@ -285,7 +285,58 @@ two sections (reported by `gen_mlb`).
 escaped quote ends the comment at its backslash. No output uses those comments today (all
 consumers keep the name only); fix it when koei-nes reads through `core.symbols` (row F).
 
+## Row D done: one native-floor tool (2026-10-22)
+
+**Shape.** The 7 copies were not one algorithm with per-title constants: they were 7 stages of
+one algorithm improving along the copy chain (syscall seeding 4 versions, reach 4, native_subs 6,
+oracle NA1 -> NA2 -> several). The merged tool is koei-nes `tools/native_floor.py <title>`: the
+last stage (UW's), driven by `games.toml` plus a `[<title>.native_floor]` table (oracle, slot
+counts, trampolines, extra seeds) whose values were copied from the forks by code. It lives in
+koei-nes beside the profile and moves with the KOEI VM (row F); it uses emu-harness for the
+6502 decode, signature, fixed bank and registry.
+
+**Oracle, per title:** (1) coverage vs the fork's own output, (2) proposals vs the fork,
+(3) inherited names vs the reviewed registry (`--check`). UW reproduced its fork exactly (326/326)
+before any change, so the port is faithful.
+
+**What the other six exposed, and the fix.** UW's phantom filter decoded each sub *linearly past
+its rts*; where a data table followed, the decode misaligned and swallowed the next real entry
+(na2 `write_ppuctrl` after the syscall table, rot3k2 `umul32` after the ext-op table,
+`syscall_set_prg_bank` in 4 titles). New rule: decode by control flow, and a candidate on another
+sub's operand byte is still kept if it comes from a vector/dispatch table or a real (decoded)
+JSR targets it; overlapped entries are a real 6502 trick. Result: UW gains 2 real subs its own
+copy dropped (`$EF81`, in its own seed list; `$FAF7 syscall_set_prg_bank`).
+
+| Title | Fork | Merged | Dropped (all junk or phantom, by evidence) | Added |
+|---|---:|---:|---|---|
+| gk | 249 | 247 | `$EE60` junk; `$C0A9` see below | |
+| na2 | 324 | 319 | 6 junk/phantom-named; `$E960` phantom duplicate | `$EC23`, `$F46B` |
+| rot3k2 | 273 | 263 | 9 junk; `$E960` phantom (registry fixed) | `$F91A` (syscall dispatcher, seeded via its vector) |
+| bk | 305 | 300 | 5 junk; `$FF20` phantom (registry fixed) | `$F6D0` |
+| GemFire | 306 | 300 | 4 junk/`DATA_`; `$F5D0`, `$F8D0` see below | |
+| LEmp | 332 | 322 | 10, all already named `phantom_*` in its registry (its recon's follow-up: "tighten the filter so those phantoms aren't emitted") | |
+| UW | 326 | 328 | | `$EF81`, `$FAF7` |
+
+**Registry corrections (phantoms that had inherited a real name; a phantom decoded 1-2 bytes off
+realigns with the real routine, so it scored 0.93-0.98 against the oracle):** rot3k2 `$E960` ->
+`$E962` `vm_op_B1_storeA_ind_word` (opcode `$B1`'s handler-table entry); bk `$FF20` -> `$FF22`
+`sound_update_noise` (the one real JSR); na2 `$E960` (duplicate of the real `$E957`) removed.
+No decompiled source referenced the moved names.
+
+**Also fixed:** koei_vm `load_games` used a line regex that knew only `[title]` headers, so a
+`[title.native_floor]` table poured its keys into the previous title (it would have replaced UW's
+`extop_table`). Now tomllib; identical values for all 9 existing titles. **Retired:** the 7
+`tools/native_floor.py`; GemFire `multi_oracle` and rot3k2 `native_bytecode_called` rewired
+(the latter finds nothing left to name, so its identical output is a weak check).
+`--check`: inherited names agree with every registry as the forks' did; the rest differ because
+reviewers chose better names after reading.
+
 ## Open questions (Chris)
+
+- **Three registry labels sit on operand bytes inside boot code**, with no caller and no table
+  entry: GemFire `$F5D0 boot_init_sound_channels`, `$F8D0 hide_sprites` (operand of `jmp $F8E5`),
+  gk `$C0A9 boot_init_tail_start_main`. They describe real code but are not entry points. Move
+  each to the instruction where that code starts, or drop them?
 
 - **nes-disasm6** (row B, deferred): still read by `asm-relabel` / `zp-harvest`?
 - **na1-snes-decompiler** has no vault pointer (it is now in the path resolver).
