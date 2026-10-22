@@ -5,7 +5,7 @@ This ledger is the audit: what exists, which jobs are done more than once, where
 live, and how each move will be proven not to change output. It plays the role `MIGRATION.md`
 played for dj-score (vault: `research/dj-library-extraction.md`); the method is that page's §4.
 
-**Status: audit only (2026-10-22). Nothing has moved.**
+**Status (2026-10-22): audit done, step 0 (packaging) done. No tool has moved yet.**
 
 ## Why
 
@@ -123,8 +123,11 @@ to prove it fails.
 
 ## Proposed order of moves
 
-0. **Packaging first.** `pip install -e ../emu-harness` per env, so imports replace `sys.path`. Until
-   that exists, nothing can move without creating a fifth hardcoded path.
+0. ✅ **Packaging (2026-10-22).** `pyproject.toml`; editable install into `py -3.14` (`py -3` is
+   3.9 on the work machine, kept for unrelated tools). Import contracts run in pytest, each shown
+   to fail on a planted violation. The three `sys.path` hacks pointing at emu-harness are gone
+   (`tools/replay_log`, `spike/mesen/smoke`, game-annotation `mappy_search`). **Rule from here:**
+   a tool that moves in is imported, never path-hacked, and the family runs on `py -3.14`.
 1. **A: label export.** 7 copies, byte-identical output, touches every layer once. Smallest real fold.
 2. **D: native floor.** 7 forks → one profile-driven tool. The oracle is each title's current output.
 3. **E: matchers.** Dissolves the ro3k pseudo-library and its 7 hardcoded paths.

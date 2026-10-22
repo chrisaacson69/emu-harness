@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "emu-harness"
+version = "0.0.1"
+description = "Console RE toolset: drive emulators in lockstep, plus the shared NES/SNES decompiler tools (see MIGRATION.md)."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest", "import-linter"]
+
+# Editable installs only (`pip install -e`): the Mesen client reads config.toml from the repo root.
+[tool.setuptools.packages.find]
+include = ["emu_harness*"]
+
+[tool.setuptools.package-data]
+"*" = ["*.lua"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+# --- The constitution (CLAUDE.md "Import rules"). `lint-imports` enforces it. ---
+[tool.importlinter]
+root_package = "emu_harness"
+
+[[tool.importlinter.contracts]]
+name = "Backends know no console"
+type = "forbidden"
+source_modules = ["emu_harness.backends"]
+forbidden_modules = ["emu_harness.machines"]
+
+[[tool.importlinter.contracts]]
+name = "Machines know no emulator"
+type = "forbidden"
+source_modules = ["emu_harness.machines"]
+forbidden_modules = ["emu_harness.backends"]
+# Known debt (CLAUDE.md): machines/nes subclasses the Mesen client. Listed so nothing new joins it;
+# paid when BizHawk gets a Python client and the shared contract moves to core/.
+ignore_imports = ["emu_harness.machines.nes -> emu_harness.backends.mesen"]

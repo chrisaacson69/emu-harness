@@ -17,7 +17,11 @@ Tools: `tools/replay_log.py` (replay an input log, report RAM SHA-1) and
 
 Game adapters live in each game's own repo. See `CLAUDE.md` for the layout and rules.
 
-Setup: copy `config.example.toml` to `config.toml` and set this machine's paths.
-Requires Python 3.11+ (`tomllib`). No ROMs are included; you supply your own.
+Setup: `py -3.14 -m pip install -e ".[dev]"` (editable), then copy `config.example.toml`
+to `config.toml` and set this machine's paths. Requires Python 3.11+ (`tomllib`).
+`py -3.14 -m pytest` checks the import contracts. No ROMs are included; you supply your own.
+
+**Growing:** the NES/SNES decompiler tools (koei-nes, koei-snes, snes-decompiler, nes-render and
+per-title copies) are being folded in as plugins; see `MIGRATION.md`.
 
 *Formerly `mesen-harness` + `nes-harness` (merged 2026-10-02).*

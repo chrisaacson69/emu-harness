@@ -22,3 +22,4 @@ config.toml
 _scratch/
 __pycache__/
 *.pyc
+emu_harness.egg-info/

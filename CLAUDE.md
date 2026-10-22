@@ -36,7 +36,10 @@ emu_harness/               the importable package: product code only
   backends/<emulator>/     client + the Lua that runs inside that emulator
   machines/<console>/      pad map, vectors, battery saves for that console
 tools/                     CLI entry points (thin; logic lives in the package)
+tests/                     pytest; test_constitution runs the import contracts
 spike/<backend>/           probes and smoke tests: exploratory, not product
+pyproject.toml             the package + the import contracts (the constitution)
+MIGRATION.md               the ledger for folding the console-RE toolset in here
 config.example.toml        committed template; config.toml is per-machine, gitignored
 _scratch/                  emulator logs and run output, gitignored
 ref/                       third-party reference runs, gitignored (no license, never vendored)
@@ -44,6 +47,13 @@ ref/                       third-party reference runs, gitignored (no license, n
 
 - **Import rules.** `machines/` never imports a backend's internals and `backends/`
   never imports `machines/`. Shared contract code goes in `emu_harness/core/`.
+  Enforced, not requested: the contracts live in `pyproject.toml` and `py -3.14 -m pytest`
+  fails on a violation. A new layer arrives *with* its contract and a planted violation that
+  proves the contract fails.
+- **Installed, never path-hacked.** `py -3.14 -m pip install -e ../emu-harness` (once per
+  machine; editable, because the Mesen client reads `config.toml` from this repo). Consumers
+  `import emu_harness`; a `sys.path.insert` pointing here is a bug. `lint-imports.exe` is
+  blocked by Application Control on the work machine: run the contracts through pytest.
 - **Known debt, stated:** `machines/nes` currently subclasses the Mesen backend and
   `wipe_battery` knows Mesen's `Saves/` folder. Pay it when the **second backend
   gets a Python client** (BizHawk has only a trace script so far): extract the shared
