@@ -150,6 +150,20 @@ to prove it fails.
   test case: the whole Zelda 1 overworld from its map data. `nes-render.render_tiles` already takes
   arbitrary `cols × rows`, so the core exists; what's missing is the contract and a non-KOEI user.
 
+### Principles confirmed after row A (Chris, 2026-10-22)
+
+- **With N disagreeing copies, the oracle is correctness, not agreement.** Matching six tools
+  that disagree is undefined; the reference is the lower artifact they all feed (for labels:
+  Mesen's own parser). Agreement with the old tools is how the *differences* get found and named,
+  not the pass condition. *"The oracle is less does it create the same output as the 6 different
+  tools, and more does it create correct output."*
+- **One model, several output formats.** A formatter that can write more than one version
+  (Mesen today; patch tables, other debuggers, automation) is the point of the Symbol layer.
+- **Title-specific means really title-specific.** A tool stays in a title repo only if no sibling
+  can use it. The portrait generator already works on Genghis Khan, so it is a KOEI tool
+  (`vm/koei/assets`), not an NA1 one. A title repo's output is the decompiled code, the assets
+  it discovers and the write-ups of the game's rules.
+
 ## Row O measured: na1 render tools vs their koei-nes ports (2026-10-22)
 
 Harness: run both at scale 1 on the same ROM. **EXACT** = identical RGB. **STRUCTURE** = identical
