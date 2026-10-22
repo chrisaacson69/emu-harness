@@ -131,7 +131,12 @@ to prove it fails.
 1. ✅ **A: label export (2026-10-22).** See "Row A done" below.
 2. **D: native floor.** 7 forks → one profile-driven tool. The oracle is each title's current output.
 3. **E: matchers.** Dissolves the ro3k pseudo-library and its 7 hardcoded paths.
-4. **B/C/N: CPU + address model** for both consoles.
+4. **B/C/N: CPU + address model** for both consoles. *B started 2026-10-22, pulled forward because
+   D and E import it:* koei-nes `disasm6502.py` moved to `emu_harness/cpu/m6502/disasm.py`, koei-nes
+   keeps a re-export (all public names, checked). Oracle: `validate` vs NA1's committed `bank_15.asm`
+   (6,634 instructions, 0 mismatches) plus 73 bank listings of 5 ROMs (NROM/MMC1/MMC5),
+   byte-identical through both import routes. Still to fold into B: ro3k `subs`, rot3k2 `disn`,
+   UW `disasm_native`, GemFire `inbank_native`, and the nes-disasm6 decision.
 5. **F: the KOEI VM**: koei-nes + koei-snes → `vm/koei` + two bindings. The largest move.
 6. **G: DREAM.** Three implementations at very different maturity; needs an IR contract. Last.
 

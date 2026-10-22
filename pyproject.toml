@@ -34,6 +34,12 @@ source_modules = ["emu_harness.core"]
 forbidden_modules = ["emu_harness.backends", "emu_harness.machines", "emu_harness.search"]
 
 [[tool.importlinter.contracts]]
+name = "CPUs know no console and no emulator"
+type = "forbidden"
+source_modules = ["emu_harness.cpu"]
+forbidden_modules = ["emu_harness.machines", "emu_harness.backends", "emu_harness.search"]
+
+[[tool.importlinter.contracts]]
 name = "Backends know no console"
 type = "forbidden"
 source_modules = ["emu_harness.backends"]
