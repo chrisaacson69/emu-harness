@@ -3,3 +3,7 @@
 # portable/winget install; set `home` if yours differs.
 mesen = 'C:\path\to\Mesen.exe'
 # home = 'C:\path\to\Mesen'
+
+# Optional: a clone of github.com/mcgrew/nes-disasm6 (Apache-2.0; run, never vendored),
+# a contender in tools/disasm_bench.py.
+# nes_disasm6 = 'C:\path\to\nes-disasm6'

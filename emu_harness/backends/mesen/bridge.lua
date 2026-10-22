@@ -28,6 +28,8 @@
 --   trace <memType> <addr> <len> <path>[|<flagAddr>] -> from now on, at every endFrame append
 --                               1 flag byte (flagAddr was read this frame) + len bytes; ok
 --   trace off                -> close the trace file; ok
+--   cdl <memType> <path>     -> write emu.getCdlData(memType) (one flag byte per byte of that
+--                               memory: the code/data log so far) to path; ok <length>
 --   quit                     -> bye, then emu.stop(0)
 
 local socket = require("socket.core")
@@ -157,6 +159,20 @@ local function handle(line)
       trace_open(mt, tonumber(a), tonumber(l), path, tonumber(fa))
     end
     send("ok")
+  elseif cmd == "cdl" then
+    local mt, path = rest:match("^(%S+)%s+(.+)$")
+    local memType = assert(emu.memType[mt or ""], "cdl: unknown memType " .. tostring(mt))
+    local data = emu.getCdlData(memType)
+    -- Mesen hands back a 0-indexed table: # misses element 0, and table.unpack from 1 would
+    -- drop the first byte and shift every flag by one. Write from the real first index.
+    local first = data[0] ~= nil and 0 or 1
+    local last = #data
+    local f = assert(io.open(path, "wb"))
+    for i = first, last, 4096 do
+      f:write(string.char(table.unpack(data, i, math.min(i + 4095, last))))
+    end
+    f:close()
+    send("ok " .. (last - first + 1))
   elseif cmd == "quit" then
     trace_close()
     send("bye")

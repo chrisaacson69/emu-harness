@@ -331,6 +331,44 @@ No decompiled source referenced the moved names.
 `--check`: inherited names agree with every registry as the forks' did; the rest differ because
 reviewers chose better names after reading.
 
+## Row B: how well each 6502 disassembler does (2026-10-22)
+
+`tools/disasm_bench.py` (capture + score) reduces every contender to one verdict per PRG byte
+(instruction start / operand / data) and scores it against two oracles:
+**the running CPU** (Mesen's code/data log via the new bridge `cdl` command; what executed vs what
+was only read) and, for Elite, **Moxon's annotated source** (every byte). Where both speak they
+agree 100%, so the source is a trustworthy oracle for the bytes the run never reached.
+
+| Contender | Elite: code found / data called code / starts real | Mappy: executed found / data called code | UW: executed found / data called code |
+|---|---|---|---|
+| linear sweep (ours) | 100% / **64.5%** / **46.4%** | 100% / **71.1%** | 99.6% / **75.2%** |
+| **nes-disasm6** (third-party) | **99.1% / 4.1% / 92.6%** | **98.5% / 5.7%** | 92.9% / 4.7% |
+| recursive descent, cold (vectors only) | 10.4% / 0% / 100% | 17.2% / 0.3% | 12.0% / 0% |
+| Mappy trace (NA1's Python 6502) | | 58.2% / 0.0% | |
+| Mappy static_expand (trace-seeded descent + jump tables) | | **96.3% / 0.5%** | |
+| UW disasm_native, bank 3 (home turf) | | | **99.5% / 0.0%** (nes-disasm6 there: 76.3% / 16.4%) |
+
+**Reading.**
+- Our linear sweep is a *listing* renderer, not a code/data separator: it calls two thirds of
+  all data "code" and fewer than half its instruction starts are real. It stays (byte-exact,
+  validated), labelled for what it is.
+- **nes-disasm6 is the best generic separator** (Apache-2.0; run as an external plugin, never
+  vendored; path in `config.toml`). Its weakness is KOEI's inline-operand calls (entries-as-starts
+  falls to 71-83% on UW).
+- Recursive descent is exact but only as good as its seeds. Seeded well (Mappy: CPU trace + jump
+  tables; UW: KOEI's `$E299`/`$E338` bridges) it beats everything on its home ROM.
+- NA1's Python 6502 core never called data "code" (0.0%): its trace is faithful, just shorter.
+- So the target is one seeded recursive descent in `cpu/m6502` (seeds from vectors, tables, the
+  CPU log, a title profile; inline-bridge lengths as a parameter), with nes-disasm6 for the regions
+  descent cannot reach. It folds 6 descent copies: ro3k `subs.reach`, GemFire `inbank_native`,
+  UW `disasm_native`, Mappy `static_expand`, koei-nes `native_floor.reach`, rot3k2 `disn` (a wrapper).
+  Oracle for that fold: no tool may score lower than its fork on its home ROM.
+
+**Found by the CPU log (UW):** bank 59 executed 966 bytes of native 6502 (28 runs, 16 subroutine
+entries, mapped at $8000) during boot and title; it is not in `native_banks` and has 0 registry
+labels, so UW's "complete" 555-sub native inventory misses it. Bank 1's executed bytes are the
+3-byte `JSR vm_entry` stubs of bytecode subs (correctly not native subs).
+
 ## Open questions (Chris)
 
 - **Three registry labels sit on operand bytes inside boot code**, with no caller and no table

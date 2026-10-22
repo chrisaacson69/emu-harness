@@ -155,6 +155,15 @@ class Mesen:
     def trace_off(self) -> None:
         self.cmd("trace off")
 
+    def cdl(self, mem_type: str, path: Path) -> bytes:
+        """Mesen's code/data log for `mem_type` (e.g. nesPrgRom): one flag byte per byte of that
+        memory, accumulated since power-on. Written to `path` by the emulator, returned here."""
+        resp = self.cmd(f"cdl {mem_type} {Path(path)}")
+        data = Path(path).read_bytes()
+        if not resp.startswith("ok ") or int(resp.split()[1]) != len(data):
+            raise BridgeError(f"cdl: {resp!r}, file has {len(data)} bytes")
+        return data
+
     def input_keys(self, port: int = 0) -> list[str]:
         return self.cmd(f"inputkeys {port}").split(",")
 
