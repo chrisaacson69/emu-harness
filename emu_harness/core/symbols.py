@@ -70,8 +70,8 @@ class Registry:
     defects: list[Defect] = field(default_factory=list)
 
 
-_SECTION = re.compile(r'^\[([^\]]+)\]\s*(?:#.*)?$')
-_KEY = re.compile(r'^"0x([0-9A-Fa-f]+)"\s*=\s*(.*)$')
+SECTION_RE = re.compile(r'^\[([^\]]+)\]\s*(?:#.*)?$')
+KEY_RE = re.compile(r'^"0x([0-9A-Fa-f]+)"\s*=\s*(.*)$')
 # Fallback for values tomllib rejects (in practice: unescaped quotes inside a comment).
 # The name never contains a quote; the comment runs to the last quote before the closing brace.
 _LOOSE = re.compile(r'^\{\s*name\s*=\s*"([^"]*)"(?:\s*,\s*comment\s*=\s*"(.*)")?\s*\}\s*(?:#.*)?$')
@@ -79,6 +79,19 @@ _LOOSE = re.compile(r'^\{\s*name\s*=\s*"([^"]*)"(?:\s*,\s*comment\s*=\s*"(.*)")?
 
 def _loose_unescape(s: str) -> str:
     return s.replace('\\"', '"').replace("\\n", "\n").replace("\\t", "\t").replace("\\\\", "\\")
+
+
+def toml_string(s: str) -> str:
+    """A TOML basic string, escaped per the spec (the escaping the hand-written writers skipped)."""
+    out = s.replace("\\", "\\\\").replace('"', '\\"')
+    out = out.replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+    return '"' + "".join(c if ord(c) >= 0x20 and c != "\x7f" else f"\\u{ord(c):04X}" for c in out) + '"'
+
+
+def format_entry(key: str, name: str, comment: str = "") -> str:
+    """One registry line, valid TOML. `key` is the address text as written, e.g. '0xC577'."""
+    body = f"name = {toml_string(name)}" + (f", comment = {toml_string(comment)}" if comment else "")
+    return f'"{key}" = {{ {body} }}'
 
 
 def read_registry(path: str | Path) -> Registry:
@@ -90,14 +103,14 @@ def read_registry(path: str | Path) -> Registry:
         s = raw.strip()
         if not s or s.startswith("#"):
             continue
-        m = _SECTION.match(s)
+        m = SECTION_RE.match(s)
         if m:
             section = m.group(1).strip()
             if section in sections:
                 reg.defects.append(Defect(n, "repeated-section", section))
             sections.add(section)
             continue
-        k = _KEY.match(s)
+        k = KEY_RE.match(s)
         if not k:
             if s.startswith('"0x'):
                 reg.defects.append(Defect(n, "unparsed", s[:60]))

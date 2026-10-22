@@ -6,7 +6,9 @@ Expected values are the ones the old per-repo exporters produced on real registr
 import pytest
 
 from emu_harness.backends.mesen.labels import format_label, render_mlb
-from emu_harness.core.symbols import Symbol, read_registry
+import tomllib
+
+from emu_harness.core.symbols import Symbol, format_entry, read_registry
 from emu_harness.machines.nes.memory import Cart, locate
 
 
@@ -72,6 +74,21 @@ def test_writer_drops_what_mesen_would_drop_and_says_so():
     ])
     assert text == "NesPrgRom:0010:first\n"
     assert len(problems) == 2
+
+
+# --- the writer of registry lines: what the hand-written f-strings got wrong ---------------
+
+@pytest.mark.parametrize("comment", [
+    '[STR] "Do you really wish to execute him"',    # na2: unescaped quotes
+    "ram: # records @ \\$6DCD",                     # gk: a backslash
+    "line one\nline two\ttab",
+    "ctrl \x01 char",
+    "",
+])
+def test_format_entry_round_trips_through_toml(comment):
+    line = format_entry("0xBC55", "msg_x", comment)
+    v = tomllib.loads(line)["0xBC55"]
+    assert v["name"] == "msg_x" and v.get("comment", "") == comment
 
 
 # --- the reader: every departure from TOML is a reported defect ---------------------------

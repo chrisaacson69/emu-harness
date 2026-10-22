@@ -236,10 +236,45 @@ commits (na1, UW: labels added since; Gemfire-snes: rot3k2's VM entries, a known
 and `mesen-labels.py` say they are versioned (and this session's `--asm` run overwrote the
 stale untracked copies with a current regen; the last committed version is `2d2e7ef^`).
 
-## Open questions (Chris)
+## Row A2 done: the registries are valid TOML (2026-10-22)
 
-- **Row A2 decisions:** the conflicting names above (which name is right at each address), and
-  whether to repair the 8 registries to valid TOML (mechanical, provable with `mlb_compare`).
+**Cause.** ~20 hand-written f-strings across 9 repos (`f'... comment = "{c}" }}'`) never escaped
+`"` or `\`. na1's walk writers (`toml_escape`) were right, which is why na1 had 0 bad lines; the
+damage came from per-title one-off tools (string sweeps, UW `gen_labels`, native-floor printers).
+Those writers are listed by `grep 'comment = "{'` and get replaced when their rows fold (I, J, L).
+New: `core.symbols.format_entry()` (spec-correct escaping) and `tools/repair_registry.py`.
+
+**Mechanical repair** (rewrite invalid entries, drop exact duplicates, merge repeated sections):
+na2 538 lines + 5 duplicates, UW 244, bk 11 + 8 sections, ro3k 45 duplicates + 1 section, gk 2.
+**Resolved on evidence** (one entry per address, both comments kept):
+
+| Address | Kept | Evidence |
+|---|---|---|
+| na2 `$603A` | `menu_box_enabled` | bytecode: the menu toggle stores to `$603A` (`$B257`), blink speed to `$603C` (`$B1D0`), where the correct `blink_period` already was |
+| na1 `$C7C9` | `music_advance_voice` | used in source/docs (2 files vs 0); what Mesen and the decompiler showed |
+| rot3k2 `$EF93/$EFC2/$F1C1` | `umul32/sdiv32/clear_a_high16` | NA2-family names, already in rot3k2's C; ext-op roles kept in the comment |
+| GemFire `$A3F4` | `unit_name_table` | the address is the table; "Horsemen" is its first entry |
+| na1 `$C173/$C7AC/$C817`, rot3k2 `$E0EA` | (same name) | two descriptions joined |
+
+**Proof, against every reader** (not just Mesen): `.mlb` before/after (byte-identical or
+label-identical, except the resolutions); koei-nes `bank_scoped_labels` per bank,
+`build_bank_call_map`, `build_syscall_names`; the NA1-lineage flattened view. Only change:
+GemFire `$A3F4` in the decompiler's view (`msg_horsemen` -> `unit_name_table`; no committed file
+used the old name).
+
+**Result: 9 of 10 registries are valid TOML.** UW keeps its 5 repeated sections, on purpose: the
+koei-nes decompiler resolves cross-section collisions by *file order*, and merging flipped UW bank 8
+`$A003` from `win_open` (right: bank 1 is co-resident at `$A000`) to `nat_8_0003` (bank 8 seen
+through the other window). The real fix is row N: a `[prg.bankN]` label applies only in the window
+that bank is mapped to (UW's own `prg.py` already keys labels by PRG offset). Same class, still
+open: na2's 3 window collisions at `$18056/$180A7/$1D03B` and na1's fixed-bank aliases filed under
+two sections (reported by `gen_mlb`).
+
+**Reader debt found:** koei-nes `bank_scoped_labels` reads comments with `"([^"]*)"`, so an
+escaped quote ends the comment at its backslash. No output uses those comments today (all
+consumers keep the name only); fix it when koei-nes reads through `core.symbols` (row F).
+
+## Open questions (Chris)
 
 - **nes-disasm6** (row B, deferred): still read by `asm-relabel` / `zp-harvest`?
 - **na1-snes-decompiler** has no vault pointer (it is now in the path resolver).
