@@ -79,7 +79,9 @@ def render_tiles(chr, nametable, palette16, *, cols, rows, attr=None, subpalette
         whose palette doesn't follow the 4x4 attribute grid (mid-cell shifts, stitched pages);
       else `attr` (a raw NES attribute table) is decoded per the hardware 2x2-quad rule;
       else sub-palette 0 everywhere.
-    `transparent_index`: nametable cells equal to it are left as `bg` (for sparse layouts / text spaces)."""
+    `transparent_index`: nametable cells equal to it are left as `bg` (for sparse layouts / text spaces).
+    Pixel value 0 is the universal backdrop palette16[0] in every sub-palette, as on the PPU
+    ($3F04/$3F08/$3F0C are never shown for the background)."""
     M = master or NES_MASTER
     img = Image.new('RGB', (cols * 8, rows * 8), bg)
     px = img.load()
@@ -98,14 +100,16 @@ def render_tiles(chr, nametable, palette16, *, cols, rows, attr=None, subpalette
             for y in range(8):
                 grow = grid[y]
                 for x in range(8):
-                    px[x0 + x, y0 + y] = M[pal[grow[x]] & 0x3F]
+                    v = grow[x]
+                    px[x0 + x, y0 + y] = M[(pal[v] if v else palette16[0]) & 0x3F]
     return img.resize((cols * 8 * scale, rows * 8 * scale), Image.NEAREST) if scale != 1 else img
 
 
 def render_sprites(chr, oam, palette16, base, *, chr_base=0, sprite_h=8, scale=1, master=None):
     """Overlay OAM sprites (4 bytes each: y, tile, attr, x) onto `base` (a PIL image). Colour 0 is
     transparent. `sprite_h`=8 (default) or 16 (8x16 mode: top tile = tile&0xFE, bottom = +1, order
-    swapped under vertical flip). palette16 here is the 16-byte sprite palette region (4 sub-palettes)."""
+    swapped under vertical flip). palette16 here is the 16-byte sprite palette region (4 sub-palettes).
+    A sprite's top line is OAM Y + 1: the PPU draws it on the scanline after the one OAM names."""
     M = master or NES_MASTER
     base = base.copy(); px = base.load()
     for i in range(0, len(oam), 4):
@@ -126,7 +130,7 @@ def render_sprites(chr, oam, palette16, base, *, chr_base=0, sprite_h=8, scale=1
                     c = grid[7 - ty if fy else ty][7 - tx if fx else tx]
                     if c == 0:
                         continue
-                    X, Y = x + tx, y + dy + ty
+                    X, Y = x + tx, y + 1 + dy + ty
                     if 0 <= X < base.width and 0 <= Y < base.height:
                         px[X, Y] = M[pal[c] & 0x3F]
     return base.resize((base.width * scale, base.height * scale), Image.NEAREST) if scale != 1 else base

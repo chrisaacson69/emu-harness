@@ -20,6 +20,7 @@ import sys
 from pathlib import Path
 
 from emu_harness.machines.nes import ppu as NR   # the generic NES pixels
+from emu_harness.vm.koei.nes.assets import MASTER
 from emu_harness.vm.koei.nes.titles import game_cfg, make_vm
 
 # ---- per-title portrait config (NA1; from project_nobunaga_daimyo_portraits) ----
@@ -44,7 +45,7 @@ NA1 = {
 }
 # Portraits render through nes-render's WARM master (NES_MASTER_FCEUX) so the ROM's real 2C02 indices
 # land warm cream/gold (matching the in-game look + the original NA1 tool), instead of the cool default.
-PAL_MASTER = NR.NES_MASTER_FCEUX
+PAL_MASTER = MASTER
 GRAY4 = [0x0F, 0x00, 0x10, 0x30]              # the composite sheet's greyscale ramp
 
 # ---- ROTK officer portrait config (a THIRD KOEI portrait variant; from ro3k bank_15.c) ----

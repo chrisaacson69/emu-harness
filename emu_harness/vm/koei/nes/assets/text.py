@@ -22,6 +22,7 @@ import sys
 from pathlib import Path
 
 from emu_harness.machines.nes import ppu as NR   # the generic NES pixels
+from emu_harness.vm.koei.nes.assets import MASTER
 from emu_harness.vm.koei.nes.titles import game_cfg
 
 # ---- per-title font config (NA1; from render-text.py / project ROADMAP) ----
@@ -103,7 +104,7 @@ def render_text(text, *, game="na1", cfg=NA1, scale=4, fg=None, bg=None):
     if not nametable:
         nametable = [blank]
     return NR.render_tiles(chr_blob, nametable, _pal16(cfg, fg, bg),
-                           cols=len(nametable), rows=1, scale=scale)
+                           cols=len(nametable), rows=1, scale=scale, master=MASTER)
 
 
 def font_atlas(game="na1", out="text_atlas.png", cfg=NA1, scale=5):

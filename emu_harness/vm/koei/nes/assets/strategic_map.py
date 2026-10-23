@@ -31,6 +31,7 @@ import sys
 from pathlib import Path
 
 from emu_harness.machines.nes import ppu as NR   # the generic NES pixels
+from emu_harness.vm.koei.nes.assets import MASTER
 from emu_harness.vm.koei.nes.titles import game_cfg
 from emu_harness.vm.koei.nes.assets.text import char_to_tile as _font_char_to_tile     # reuse the KOEI font asset layer (no font dup)
 
@@ -301,12 +302,12 @@ def _render_with_plane(chr, nametable, attr_plane, W, H, scale, cfg):
     we composite: render once PER sub-palette s (4 passes), each pass masking the nametable to the cells
     whose plane id == s, then keep only those cells. Correct, but 4x the pixel work of a single pass."""
     pal16 = _palette16(cfg)
-    base = NR.render_tiles(chr, nametable, pal16[0:4] + [0] * 12, cols=W, rows=H, scale=scale)
+    base = NR.render_tiles(chr, nametable, pal16[0:4] + [0] * 12, cols=W, rows=H, scale=scale, master=MASTER)
     bp = base.load()
     t = 8 * scale
     for s in range(1, 4):
         sub = pal16[s * 4: s * 4 + 4] + [0] * 12
-        layer = NR.render_tiles(chr, nametable, sub, cols=W, rows=H, scale=scale)
+        layer = NR.render_tiles(chr, nametable, sub, cols=W, rows=H, scale=scale, master=MASTER)
         lp = layer.load()
         for ty in range(H):
             for tx in range(W):

@@ -720,7 +720,7 @@ A schema language that could express UW's tables is possible, but no second titl
   panorama); the other 43 are byte-identical. The ro3k atlas is 315/315 identical, and 76 tests pass.
 
 **Still open in row O:**
-- **Retiring the na1 copies is a decision, not a move.**
+- ~~**Retiring the na1 copies is a decision, not a move.**~~ **Resolved 2026-10-23** (Chris: use warm, keep the tools as wrappers) → *Row O closed except O4*, below.
   - na1's `render-portrait` / `render-strategic-map` also carry what the port lacks: the name
     generator, `random_faces`, the faithful-stitch variants.
   - They draw with na1's own warm RGB table. The port uses that table (FCEUX) for portraits only;
@@ -770,10 +770,51 @@ fix plus the RGB-table split.
 are proven, but which 2C02 RGB table to draw with is a choice; the port's TODO is one master for the
 whole KOEI layer, decided with retiring the na1 copies.
 
-**Toolset hazard found:** `machines.nes.NES` wipes the ROM's Mesen battery save by default, which
+**Toolset hazard found (open):** `machines.nes.NES` wipes the ROM's Mesen battery save by default, which
 keeps replays clean. The O3 probes ran it on NA1 and deleted whatever `Nobunaga's Ambition
 (USA).sav` held; it can't be recovered. Fix it by backing up instead of deleting, and say so in
 `NES()`.
+
+## Row O closed except O4: one RGB table, two PPU rules, na1's tools thin (2026-10-23)
+
+**One RGB table.** `vm/koei/nes/assets.MASTER` = FCEUX's 2C02 table (Chris: "use warm"), the same
+64 entries as na1's three copies. Every KOEI asset renderer draws with it. The indices are what row
+O measured; this only turns them into colours. na1's `render-fief-from-ppu` had used nes-render's
+cool default.
+
+**Two PPU rules fixed in `machines/nes/ppu`,** each pinned by `tests/test_ppu.py` (both fail on
+the old code):
+- **Background pixel 0 is the universal backdrop `$3F00`** in every sub-palette. `render_tiles` used
+  each sub-palette's own entry 0, which the PPU never shows. Invisible on KOEI palettes (all repeat
+  `$3E`); na1's fief renderer had it right.
+- **A sprite's top line is OAM Y + 1.** Crops hide it; full frames were a line high.
+
+**Animation layer:** it crops to the pixels drawn, from a transparent sprite layer (na1's final
+behaviour). 8×16 sprites go through `render_sprites` (the hand split lost the half-swap under
+vertical flip; na1 has the same bug). `--pt 1` passed tile units as a byte offset.
+
+**na1's render tools are thin** (Chris: "even if tools become specific to a title, they should still
+use library calls"). `render-text`, `render-portrait`, `render-strategic-map`, `run-animation` and
+`render-fief-from-ppu` keep their APIs, CLIs and presentation (RGB text, anthology, name generator,
+stitch variants, labels, dump layout). The format and the pixels now come from the library. The other
+eleven render tools build on these.
+
+**Oracle,** every public function and CLI product before vs after (796 outputs):
+- **EXACT:** portraits (682 images: all 625 composite codes, 50 presets, sheets, anthologies, the
+  random 36), strategic map (9 sections, stitch, contact sheet, both faithful stitches + their layout
+  data), text (renders, atlas, all 254 glyph masks, the char map).
+- **Animations, all 34:** STRUCTURE, backdrop grey → black only.
+- **Fief PPU renders:** STRUCTURE (the table).
+- **`decode_tile`, 5 of 256 tiles differ, all named:**
+  - tile 0: the PPU's raw 2bpp, not an ink mask;
+  - tiles 77–80: on the map screen they hold bank 0's font (the PPU capture), not render-text's
+    boot-time bank-6 tiles.
+  - The map uses none of them.
+- **Importers run:** `render-fief-truecolor`, `render-daimyo-banners`, `wikipages/assets` and
+  `/font`, `build-command-page`'s text renderer.
+- **Library side:** the render oracle changes only the intended images; the ro3k atlas is 315/315
+  identical; 79 tests pass.
+- These tools now need `py -3.14`; the `/nobunaga` skill says so.
 
 ## Row D done: one native-floor tool (2026-10-22)
 
@@ -1466,7 +1507,8 @@ finished toolset, not just the items below.
 | bk-decompiler, GemFire-decompiler | `halve_a32` / `halve_a32_rounded` are ext ops `$1B` / `$1C`: the code adds 1 / `$FFFFFFFF` across `$08`, so `inc32` / `dec32`. | row E handler read |
 | UW-decompile, LEmp-decompiler | `vocabulary.toml` `[[conflict]]`s: LEmp `max_s16` = UW `min_s16` (identical code); UW `alu_*` names contradict their twins, and several match only on the 64-instruction signature prefix; UW `boot_banking_init` / `boot_init_oam` vs GemFire's names. Read, then settle. | row E `family` |
 | ro3k-decompiler | The committed `atlas/` (June) is stale: the pre-move code already regenerates `officers-index.png`, `off-001`, `off-200` and 2 more differently, and the moved code gives the same result (315/315). Regenerate and commit. | row O1 |
-| na1-decompiler | `render-strategic-map.py` and the strategic-map notes name `$845C` → PT1 tile 91 ($15B0) as the tileset upload; the live capture shows it starts at tile 81 (`$83BC`). Find the upload call and correct the comment / memory. | row O2 |
+| na1-decompiler | The strategic-map notes / memory name `$845C` → PT1 tile 91 ($15B0) as the tileset upload; the live capture shows it starts at tile 81 (`$83BC`). Find the upload call and correct the memory (`render-strategic-map.py`'s docstring was corrected when it went thin). | row O2 |
+| na1-decompiler | Regenerate the committed render outputs after the tools went thin: animation GIFs / frame sheets (black backdrop; most were stale already), the fief PPU renders and truecolor maps (now the warm table), the strategic contact sheets (stale since 06-17). `batch-render-anims` / `batch-render-fief-maps` must run under `py -3.14`. | row O close |
 | ro3k-decompiler | `vocabulary.toml` `[[conflict]]`s: `upload_vram_table_c380` = NA1/gk `reset_ppu_init`; `vm_illegal_opcode` = NA1 `vm_op_trigger_syscall_shared`; `scroll_timer_dec` = gk `sound_channel_timer`. | row E `family` |
 
 ## Open questions (Chris)

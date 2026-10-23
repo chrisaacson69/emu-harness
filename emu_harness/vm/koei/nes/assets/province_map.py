@@ -30,6 +30,7 @@ import sys
 from pathlib import Path
 
 from emu_harness.machines.nes import ppu as NR   # the generic NES pixels
+from emu_harness.vm.koei.nes.assets import MASTER
 from emu_harness.vm.koei.nes.titles import game_cfg
 
 # ---- per-title province-map config (ROTK) ----
@@ -62,7 +63,7 @@ ROTK = {
     #   +0 gold (word)  +2 rice (word)  +4 land-value (byte)  +5 flood (byte, shown 100-x)
     #   +6 population (word, shown x100)  +8 loyalty (byte)  +13 controlling-faction (byte)
 }
-PAL_MASTER = NR.NES_MASTER_FCEUX
+PAL_MASTER = MASTER
 
 
 def _prg(cfg):

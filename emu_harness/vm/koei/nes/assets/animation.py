@@ -12,7 +12,7 @@ frame at each present point. That part is the keep -- it's genuine per-title eng
 The eviction: run-animation carried its own `decode_tile` + a hardcoded `NES_PALETTE` and hand-rolled
 the per-sprite pixel loop (flip/transparency/clip). All of that is GENERIC NES PPU work -- it now lives
 in nes-render. Per frame we hand nes-render the (CHR, OAM, palette) and it returns the pixels via
-`NR.render_sprites` over a backdrop built from `NR.NES_MASTER`. Zero own-core pixel decode here.
+`NR.render_sprites` over a backdrop built from the asset layer's `MASTER`. Zero own-core pixel decode here.
 
 Dependency direction: koei-nes -> nes-render (generic), never the reverse. ROM is resolved via
 `game_cfg`; the SRAM trace (a captured mid-game state, lives in the na1 repo) is resolved relative to
@@ -22,6 +22,7 @@ import sys
 from pathlib import Path
 
 from emu_harness.machines.nes import ppu as NR   # the generic NES pixels
+from emu_harness.vm.koei.nes.assets import MASTER
 from emu_harness.vm.koei.nes.titles import game_cfg, make_vm
 from PIL import Image
 
@@ -234,35 +235,30 @@ def render_frames(frames, *, pt_base=0, sprite_h=8, scale=3, trace=False):
         print("no frames captured")
         return [], []
 
-    chr_base = pt_base // 16              # nes-render indexes by tile; pt_base is a byte offset
+    chr_base = pt_base                    # decode_tile's base is a byte offset, like pt_base
     imgs, frame_sprites = [], []
-    sprite_bbox = None                   # bbox of OAM-positioned sprites = the animation window
+    sprite_bbox = None                   # bbox of the pixels actually drawn = the animation window
     for fi, (oam, pal, chr_snap) in enumerate(frames):
         active = [i for i in range(64) if oam[i*4] < 0xEF]
         frame_sprites.append(len(active))
 
         # The backdrop is $3F00, but the 32-byte upload's $3F10 write lands on it last (a hardware
         # mirror), so it is the shadow's $10; its $00 is never written by the animation (row O3).
-        backdrop = Image.new("RGB", (256, 240), NR.NES_MASTER[pal[0x10] & 0x3F])
+        backdrop = Image.new("RGB", (256, 240), MASTER[pal[0x10] & 0x3F])
         pal16 = _sprite_palette16(pal)
 
-        # Expand 8x16 sprites to two 8x8 OAM entries so the generic 8x8 render_sprites covers both.
-        oam_list = []
-        for i in active:
-            y, tile, attr, x = oam[i*4], oam[i*4+1], oam[i*4+2], oam[i*4+3]
-            if sprite_h == 16:
-                base_tile = tile & 0xFE
-                oam_list += [y, base_tile, attr, x, y + 8, base_tile + 1, attr, x]
-            else:
-                oam_list += [y, tile, attr, x]
-            # OAM-position bbox (the draw window), independent of which pixels are opaque
-            h = sprite_h
-            x0, y0, x1, y1 = x, y, x + 8, y + h
-            sprite_bbox = ([x0, y0, x1, y1] if sprite_bbox is None
-                           else [min(sprite_bbox[0], x0), min(sprite_bbox[1], y0),
-                                 max(sprite_bbox[2], x1), max(sprite_bbox[3], y1)])
-
-        img = NR.render_sprites(chr_snap, bytes(oam_list), pal16, base=backdrop, chr_base=chr_base)
+        # Sprites go onto a transparent layer first, so the window is the pixels actually drawn
+        # (na1's final crop); 8x16 mode, flips included, is render_sprites' own.
+        layer = NR.render_sprites(chr_snap, bytes(oam[i*4:i*4+4][k] for i in active for k in range(4)),
+                                  pal16, base=Image.new("RGBA", (256, 240), (0, 0, 0, 0)),
+                                  chr_base=chr_base, sprite_h=sprite_h, master=MASTER)
+        box = layer.getchannel("A").getbbox()
+        if box:
+            sprite_bbox = (list(box) if sprite_bbox is None
+                           else [min(sprite_bbox[0], box[0]), min(sprite_bbox[1], box[1]),
+                                 max(sprite_bbox[2], box[2]), max(sprite_bbox[3], box[3])])
+        backdrop.paste(layer, (0, 0), layer)
+        img = backdrop
         imgs.append(img)
         if trace:
             print(f"  frame {fi}: {len(active)} sprites")
@@ -273,7 +269,7 @@ def render_frames(frames, *, pt_base=0, sprite_h=8, scale=3, trace=False):
         while len(imgs) > 1 and frame_sprites[-1] < max(1, peak * 0.30):
             imgs.pop(); frame_sprites.pop()
 
-    # Clip to the SPRITE bounding region (OAM positions = the draw window). NOT getbbox(): the backdrop
+    # Clip to the drawn sprite pixels, padded. NOT the composite's getbbox(): the backdrop
     # is palette entry 0 (often grey), so getbbox would return the whole 256x240.
     if sprite_bbox:
         pad = 8
@@ -309,7 +305,7 @@ def render_animation(aid, *, game="na1", cfg=None, sram=None, pt=0, sprite_h=8, 
     for i, im in enumerate(imgs):
         sheet.paste(im, ((i % cols)*(w+4)+2, (i // cols)*(h+4)+2))
     sheet.save(f"{out_prefix}-frames.png")
-    print(f"wrote {out_prefix}.gif ({len(imgs)} frames, {w}x{h}) + -frames.png  (via nes-render)")
+    print(f"wrote {out_prefix}.gif ({len(imgs)} frames, {w}x{h}) + -frames.png")
     return imgs
 
 
