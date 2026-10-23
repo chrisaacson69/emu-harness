@@ -46,9 +46,8 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-# vm_assemble is NA1's (na1-decompiler tools/): run this gate from that folder, as before.
 from emu_harness.vm.koei.nes.nobunaga_vm import NobunagaVM
-from vm_assemble import find_stubs, bank_range, walk_sub
+from emu_harness.vm.koei.nes.vm_assemble import find_stubs, bank_range, walk_sub
 from emu_harness.vm.koei.nes.vm_stack_effect import STACK_EFFECT, GATED_CLASSES, effect
 
 CODE_BANKS = (0, 1, 2, 10, 14, 15)

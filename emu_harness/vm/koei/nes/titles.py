@@ -147,24 +147,31 @@ def _import_core():
     """Kept for callers of the old koei_vm API: the core is part of this package now."""
 
 
-def disasm(name, bank, out=None):
-    cfg = game_cfg(name); _import_core()
+def bank_view(name, bank):
+    """One bytecode bank of a title, set up the way every NES pipeline step reads it: the title's
+    vm_entry stub pattern, bank size and window (the full model: the cart's fixed banks at
+    $C000/$E000; bank_base_for skips those, so UW's bank 63 rendered at $A000, F2) on vm_disasm, and
+    a VM runner with the title's ROM + labels and that bank switched in.
+    -> (vm, vm_disasm module, cfg, base, size, stubs)"""
+    cfg = game_cfg(name)
     import emu_harness.vm.koei.nes.vm_disasm as VD
     from emu_harness.vm.koei.nes.nobunaga_vm import NobunagaVM
     VD.VM_ENTRY_STUB = bytes(int(b, 16) for b in cfg["vm_entry_stub"].split())
     VD.ROM_NAME = cfg["rom"]                            # per-title banner (was hardcoded NA1)
     VD.BANK_SIZE = cfg.get("bank_size", 0x4000)        # 0x2000 for MMC5 8K-bank titles (na2)
-    base = windows(cfg).base(bank)                      # per-bank: $8000 (lib) vs $A000 (app), the cart's
-                                                        # fixed banks at $C000/$E000 (bank_base_for skips
-                                                        # those: UW's bank 63 rendered at $A000; F2)
+    base = windows(cfg).base(bank)                      # per-bank: $8000 (lib) vs $A000 (app), fixed banks
     VD.BANK_BASE = base
     vm = NobunagaVM(rom_path=str(cfg["_rom"]), labels_path=cfg["_labels"])
     vm.mem.bank_size = cfg.get("bank_size", 0x4000); vm.mem.bank_base = base
-    vm.switch_bank(bank); mem = vm.mem
-    labels = {a: n for a, (n, _c) in bank_scoped_labels(cfg, bank).items()}
+    vm.switch_bank(bank)
     base, size = VD.bank_range(bank)
-    stubs = VD.find_stubs(mem, base, size)
-    listing, _mis = VD.render(bank, stubs, mem, labels, len(vm.labels))
+    return vm, VD, cfg, base, size, VD.find_stubs(vm.mem, base, size)
+
+
+def disasm(name, bank, out=None):
+    vm, VD, cfg, base, size, stubs = bank_view(name, bank)
+    labels = {a: n for a, (n, _c) in bank_scoped_labels(cfg, bank).items()}
+    listing, _mis = VD.render(bank, stubs, vm.mem, labels, len(vm.labels))
     if out:
         Path(out).write_text(listing, encoding="utf-8"); print(f"wrote {out} ({len(stubs)} subs)")
     else:
