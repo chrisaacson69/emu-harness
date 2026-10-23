@@ -150,6 +150,12 @@ def interpret_animation(aid, *, game="na1", cfg=None, sram=None, trace=False):
     frames = []                          # list of (oam_copy, pal_copy, chr_copy)
     state = {"uploads": 0, "present": 0}
 
+    # The game enters an animation with every OAM slot hidden (Y=$F8; Mesen's OAM before Train, row
+    # O3); headless, the shadow starts zeroed, and a zero slot is a visible sprite at (0,0).
+    for i in range(64):
+        vm.mem.write(cfg["oam_shadow"] + i * 4, 0xF8)
+        vm.mem.write(cfg["oam_shadow"] + i * 4 + 3, 0xF8)
+
     vm.switch_bank(cfg["anim_bank"])
     fp = 0x05FF
     vm.vm_fp = fp
@@ -235,7 +241,9 @@ def render_frames(frames, *, pt_base=0, sprite_h=8, scale=3, trace=False):
         active = [i for i in range(64) if oam[i*4] < 0xEF]
         frame_sprites.append(len(active))
 
-        backdrop = Image.new("RGB", (256, 240), NR.NES_MASTER[pal[0] & 0x3F])
+        # The backdrop is $3F00, but the 32-byte upload's $3F10 write lands on it last (a hardware
+        # mirror), so it is the shadow's $10; its $00 is never written by the animation (row O3).
+        backdrop = Image.new("RGB", (256, 240), NR.NES_MASTER[pal[0x10] & 0x3F])
         pal16 = _sprite_palette16(pal)
 
         # Expand 8x16 sprites to two 8x8 OAM entries so the generic 8x8 render_sprites covers both.

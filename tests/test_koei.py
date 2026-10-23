@@ -181,3 +181,19 @@ def test_na1_assets_match_the_live_ppu_capture():
     assert all(chr[v * 16: v * 16 + 16] == pt1[v * 16: v * 16 + 16] for v in used)
     cells = portrait.composite_layout(prg, (1, 2, 3, 4))
     assert len(cells) == 36 and cells != bytes(range(0x5B, 0x5B + 36))
+
+
+def test_na1_animation_matches_mesen():
+    """Row O3: Mesen's PPU during Train (anim 10) holds sprite palette $3F10-$3F1F below, backdrop $3E
+    (the $3F10 mirror), and every unused OAM slot at Y=$F8. The headless VM must reproduce the palette
+    and leave no phantom sprite at (0,0). Needs the sibling na1 checkout + ROM."""
+    import pytest
+    from emu_harness.vm.koei.nes.titles import game_cfg
+    from emu_harness.vm.koei.nes.assets import animation as A
+    if not game_cfg("na1")["_rom"].exists():
+        pytest.skip("na1-decompiler ROM not present")
+    frames, _ = A.interpret_animation(10)
+    assert len(frames) > 1
+    for oam, pal, _chr in frames:
+        assert pal[0x10:] == bytes.fromhex("3e1638303e1222303e2722383e162930")
+        assert all(oam[i * 4] >= 0xEF or oam[i * 4: i * 4 + 4] != b"\0\0\0\0" for i in range(64))

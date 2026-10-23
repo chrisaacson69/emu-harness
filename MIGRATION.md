@@ -212,7 +212,7 @@ Then the port against na1:
 | text (3 strings) | **STRUCTURE**: white `(255,255,255)` → `(236,238,236)` | port is good; the colour is nes-render's real NES white (intended) |
 | composite faces (3 codes) | **DIFFERENT** | **port bug:** `render_composite_face` lays the 36 tiles out in CHR order (`render_chr_atlas`) and never applies the face layout map, so the face is scrambled. *Fixed in O2: EXACT.* |
 | strategic map, all 9 sections | **DIFFERENT** | **port bug:** ~~tiles match, attribute → sub-palette decode is wrong~~ the attribute decode was right; the port left tiles 81–90 blank (black holes). *Fixed in O2: STRUCTURE.* |
-| animation 10, 12 | same 10/20 frames and shapes; full canvas and a different palette | **undecided:** neither palette is proven; the truth is an emulator-rendered frame (Mesen `emu.takeScreenshot` via this harness) |
+| animation 10, 12 | same 10/20 frames and shapes; full canvas and a different palette | **undecided:** neither palette is proven; the truth is an emulator-rendered frame (Mesen `emu.takeScreenshot` via this harness). *Settled in O3 from Mesen's PPU state: STRUCTURE.* |
 
 **So the canon is mixed, and the fold for row O is:** take koei-nes's *structure* (KOEI layer
 locates data, nes-render draws pixels, per-title config) and na1's *verified behaviour*. Fix the
@@ -727,8 +727,53 @@ A schema language that could express UW's tables is possible, but no second titl
     text and map use nes-render's default.
   - Thinning them to the port changes their committed PNGs' colours unless the KOEI layer adopts
     one master for everything.
-- **O3:** the animation palette, against an emulator-rendered frame.
+- ~~**O3:** the animation palette, against an emulator-rendered frame.~~ Done, below.
 - **O4:** the virtual-canvas contract, with a non-KOEI user (Zelda overworld).
+
+## Row O3 done: the animation, against Mesen's own PPU (2026-10-23)
+
+**The oracle is the PPU's state, not a screenshot.** Through the bridge, read Mesen's
+`nesPaletteRam`, `nesSpriteRam` (OAM) and `nesChrRam` every frame while the real game plays
+Train (anim 10). This gives palette *indices*, so the RGB-table question can't confuse it, and it
+needs no desktop capture.
+
+**The route,** from power-on, headless. Prompts are read by decoding the nametable through the font
+map. NA1 answers Y/N with **Left = Yes, Right = No** (Chris).
+1. Start, then New game: Left.
+2. 17 fiefs: Left. Watch battles: Right.
+3. Players: Up, A. Fief 1: Up, A, then Left.
+4. Five A presses lock the stats in; OK: Left. Skill level: Up, A. All OK: Left.
+5. Wait for the command menu. The first direction press selects item 1, then Down is +1 and Up −1
+   (wrapping), so Train = Up×3, A.
+
+`NAsave1.mss` loads through the bridge but is a battle screen. `exp-fall-1560-start.dmp` installed
+as the battery reads "No saved data": it is a work-RAM snapshot, not a battery image.
+
+**Measured (VM = the headless animation interpreter both renderers use):**
+| | Result |
+|---|---|
+| sprite palette `$3F10–$3F1F` | VM shadow **=** PPU, constant for the whole animation |
+| sprite CHR | 107/107 tiles used **=** pattern table `$0000` |
+| frames | the VM's 20 present-point frames appear **in order** among the PPU's 141 distinct OAM states (the rest are frames mid-build) |
+| backdrop | **bug in both renderers.** They used shadow `$00`, which the animation never writes (grey `$00`). On the PPU it is `$3E`: the upload's `$3F10` write mirrors onto `$3F00`. |
+| unused OAM | **bug in both.** The game enters with every slot at Y=`$F8`; headless, the shadow starts zeroed, so zero slots were drawn as sprites at (0,0). That was the port's "full canvas"; NA1 hid it by cropping to opaque pixels. |
+
+**Fixed in the port:** the shadow starts hidden and the backdrop comes from `$10`. The VM frames now
+match the PPU with no filtering. Against NA1, animations 10 and 12 are **STRUCTURE** in every frame
+(identical pixels at the best offset, nothing outside NA1's crop). The colour map is the backdrop
+fix plus the RGB-table split.
+- Render oracle: exactly the 30 animation frames change (crop 128×215 → 80×64); the other 26 are
+  identical.
+- `test_na1_animation_matches_mesen` pins the palette and the no-phantom rule; 77 tests pass.
+
+**The RGB table is now the only render difference left** (text, map and animations). The indices
+are proven, but which 2C02 RGB table to draw with is a choice; the port's TODO is one master for the
+whole KOEI layer, decided with retiring the na1 copies.
+
+**Toolset hazard found:** `machines.nes.NES` wipes the ROM's Mesen battery save by default, which
+keeps replays clean. The O3 probes ran it on NA1 and deleted whatever `Nobunaga's Ambition
+(USA).sav` held; it can't be recovered. Fix it by backing up instead of deleting, and say so in
+`NES()`.
 
 ## Row D done: one native-floor tool (2026-10-22)
 
