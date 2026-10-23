@@ -433,6 +433,43 @@ remainder as unverified.
 - The na1 handler classifiers (`classify-handlers`, `analyze-vm-opcodes`) use short fixed-length
   scans, not descents. They belong to row F.
 
+## Row N started: which window does each bank run in? (2026-10-23)
+
+**Four copies of the bank-window list, and they disagree:** koei-nes `games.toml`
+(`banks_at_8000` per title), UW `prg.py` (the same as games.toml), UW `disasm_native`
+(`BANKS_AT_8000`, its own list), and GemFire `inbank_native` (the same as games.toml).
+
+**The oracle, a bank's own code, scored against each list:**
+- *Words onto own stubs.* A 16-bit word in the bank that lands exactly on one of the bank's own
+  `JSR vm_entry` / `JSR $E299` stubs when the bank sits at that base. A call into another bank
+  rarely lands on a stub.
+- *Rendered call targets.* Where the jsr/jmp targets of an already-rendered listing point.
+
+The first try, a raw count of in-bank JSRs, was confounded: an app bank at `$A000` calls library
+banks at `$8000`.
+
+**What the bank's own code says:**
+- na2, rot3k2, bk, LEmp: every bank agrees with games.toml.
+- GemFire bank 2: `$8000` (70 to 3); games.toml says `$A000`. It is not in `code_banks`, has no
+  labels and no listing, and opens with native code (`jmp $8142`, `jsr $80f4`). It is unwalked
+  code: a coverage gap like UW bank 59.
+- UW banks 7, 10, 13 and 59: `$8000`; games.toml says `$A000`. Bank 59 is confirmed by the CPU log.
+- UW `disasm_native`'s list is wrong for 11 banks (0, 7, 8, 10, 12, 13, 17, 20-24, 29, 30 as
+  scored). Of its 12 committed listings, banks 7, 8, 10, 13 and 17 are rendered at `$A000`, yet
+  they make 289 calls into `$8000` and none into `$A000`. Banks rendered at `$8000` call their own
+  window heavily. So those listings are at the wrong base. Every in-bank call was treated as
+  external and never followed, and the recovery pass guessed the subs instead (28 in bank 7, 27 in
+  bank 13). UW's 555-sub inventory and its "106 jumptable-recovered" figure need recounting.
+- **The 4 remaining same-byte collisions** (na2 x3, UW x1) are each a label at a CPU address its
+  bank never runs at (`$A056` in a `$8000` bank, and so on): wrong-window duplicates.
+
+**Plan:**
+1. One window model in `machines/nes`, read from the title profile.
+2. Correct the profile from this evidence.
+3. UW `prg.py` / `disasm_native` and GemFire `inbank_native` consume it.
+4. Re-render and recount UW.
+5. Resolve the 4 wrong-window labels.
+
 ## Open questions (Chris)
 
 - ~~**Three registry labels sit on operand bytes inside boot code**: move or drop?~~ **Resolved
