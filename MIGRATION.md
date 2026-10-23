@@ -84,7 +84,7 @@ The **oracle** is how the fold is proven to change nothing.
 | C | 6502 CPU emulation ✅ | koei-nes `koeivm/cpu6502` · game-annotation Mappy `trace_codegraph.TracingCPU` (the 18 missing opcodes) · (ro3k `emulator_rotk` and koei_vm's VM runner are VM-level, row F) | `cpu/m6502/cpu` | nestest golden log + na1's `test-cpu6502` / `test-dispatcher` / value-oracle, ro3k income test, Mappy trace + render |
 | D | **Native floor** (enumerate + name the kernel under the VM) | 7 NES forks (gk, na2, rot3k2, bk, GemFire, LEmp, UW) · koei-snes `native_floor` | `vm/koei/native_floor`, profile-driven | each title's current output, all 7 |
 | E | **Cross-title matchers** | ro3k `handler_match`, `bc_match` (gk has a verbatim copy), `native_match` · GemFire `multi_oracle` | `vm/koei/match` | same match tables |
-| F | **KOEI VM toolchain** | koei-nes `koeivm/*` + `koei_vm.py` · koei-snes `vm_*` · na1 `vm_assemble`, `vm-roundtrip`, `analyze-vm-opcodes`, `classify-handlers`, `gen-opcode-appendix`, `vm-opcode-labels` · wrappers: ro3k `vm_disasm_rotk`, `vm_decompile_rotk`, na1 `na1dream` alias, UW `disasm_fixed_bytecode` · opcode tables: `vm-opcodes-v2.toml`, `vm_opcode_names.toml` · retired candidate: game-annotation `vm-disasm` | `vm/koei` + `machines/{nes,snes}` syscall bindings | every title's decompiled C byte-identical |
+| F | **KOEI VM toolchain** (F1 ✅) | koei-nes `koeivm/*` + `koei_vm.py` · koei-snes `vm_*` · na1 `vm_assemble`, `vm-roundtrip`, `analyze-vm-opcodes`, `classify-handlers`, `gen-opcode-appendix`, `vm-opcode-labels` · wrappers: ro3k `vm_disasm_rotk`, `vm_decompile_rotk`, na1 `na1dream` alias, UW `disasm_fixed_bytecode` · opcode tables: `vm-opcodes-v2.toml`, `vm_opcode_names.toml` · retired candidate: game-annotation `vm-disasm` | `vm/koei` + `machines/{nes,snes}` syscall bindings | every title's decompiled C byte-identical |
 | G | **DREAM structuring** + its gates | koei-nes `dream.py` (1,918) · koei-snes `vm_struct` (159) · snes-decompiler `native_decompile` (602, a port) · gates: `cfg_gate`, `stack_audit`, na1 `detect-prop-clobber`, `v2-corpus`, `value-oracle` | `passes/structure` over a shared IR | decompiled C byte-identical; na1 V2 corpus |
 | H | Call graphs | bk `bank_callgraph` · GemFire `call_hierarchy` · UW `call_graph` · mappy `call_graph` · na1 `native-call-index`, `driver-call-index` · koei-snes `vm_callgraph` · snes-decompiler `native_callgraph` · rot3k2 `bank_hierarchy`, `native_bytecode_called` | `passes/callgraph` | identical edge sets |
 | I | Walk ordering (leaves first) | bk `walk_order` · UW `walk_bank` · ro3k `bc_layers` · na1 `bank-ground-order`, `cluster-anon-subs` · koei-snes `gen_layers` | `walk/order` | identical worklists |
@@ -147,6 +147,14 @@ to prove it fails.
    done" below. ✅ **C done 2026-10-23**: one complete 6502 core, verified on nestest. See "Row C
    done" below.
 5. **F: the KOEI VM**: koei-nes + koei-snes → `vm/koei` + two bindings. The largest move.
+   Phased:
+   - ✅ **F1 2026-10-23:** koei-nes's VM package moves into `emu_harness.vm.koei`, with aliases.
+   - ✅ **F1b:** NA1's file paths resolve through the title profile, and per-title data stays per
+     title.
+   - **F2:** NES vs SNES opcode tables, one table.
+   - **F3:** separate the NES host binding; fold the wrappers (ro3k, na1, UW).
+
+   See "Row F1 done" below.
 6. **G: DREAM.** Three implementations at very different maturity; needs an IR contract. Last.
 
 ## Decisions (Chris, 2026-10-22)
@@ -549,6 +557,64 @@ koei_vm's VM runner sit above the CPU (row F).
 - **6 tests:** nestest (skipped when the data is absent), the exact opcode set, BRK / NMI / IRQ /
   PHP-PLP. Each of 8 planted mutations fails them, the old Mappy constant-P bug among them.
 
+## Row F1 done: the KOEI VM toolchain moves in (2026-10-23)
+
+**F1, the move.** These all moved into `emu_harness/vm/koei/` unchanged, apart from package
+imports and the sibling-root depth:
+- koei-nes `tools/koeivm/` (disasm, decompile, CFG, V2 reducer, DREAM, stack model, the VM runner,
+  `cli/`, `gates/`; about 10K lines);
+- `tools/koei_vm.py`, now `titles.py`;
+- `games.toml`.
+
+New `core/alias.py`: old package names resolve to the *same module objects*, through
+`alias_package` (which also supports `python -m old.x`). The old `__path__` trick loaded each file
+twice, with separate state. koei-nes `tools/koeivm` and `tools/koei_vm.py` and na1's `na1dream`
+are now aliases. New contract: "VMs know no emulator" (a planted violation fails it).
+
+Oracle: 876 outputs, run before and after in fresh processes:
+- every code bank of 9 titles (144 banks): listing, structured C, raw C;
+- NA1's `decompile_all` and its 3 gates;
+- the na1 CPU tests and value oracle;
+- ro3k's income test, `window_check`, native_floor.
+
+872 were byte-identical. The other 4 were NA1-route runs that already failed, on the same
+missing-file error.
+
+**F1b, what the move exposed in the engine, fixed:**
+- **NA1's paths were computed from the code's own location.** That stopped pointing at NA1 when
+  the package left na1-decompiler (2026-06-29). Since then:
+  - `python -m na1dream.cli.decompile_all` and the gates crashed (NA1's `source/README.md` even
+    says the old command "no longer runs");
+  - `asset-enums.toml` silently loaded nothing, so `trigger_cutscene(CUTSCENE_BRIBE)` went back to
+    `trigger_cutscene(26)`.
+
+  Now these come from the `[na1]` profile, and the enums load per title in `set_schema`.
+  `decompile_all` produces 499 subs again, `test_vm_cfg` passes 114 of 114, and `stack_audit`
+  runs.
+- **`NobunagaVM(labels_path=...)` was accepted and ignored.** Every title's listing header said
+  "labels: 0 CPU addresses named". The title drivers now pass the title's labels, and the 144
+  listings show their real counts.
+- **NA1's certified ext-op folds were keyed by address and applied to every title.**
+  - Genghis Khan's bank-5 `$8327` (different bytecode: compared byte for byte) rendered as NA1's
+    `scale_div10_capcheck`. Its real body computes a wrapped tile-row offset, which is what its
+    registry name says.
+  - UW's bank-38 `$8327` crashed on the fold ("list index out of range").
+
+  The folds now apply to NA1 only.
+
+**F1b oracle:**
+- Every difference from the F1 state is one of those named changes: 144 listing headers, 6 NA1 C
+  files with enum names, 4 NA1 runs that work again, gk bank 5, and UW bank 38.
+- **The pre-F1b title-route C for NA1 is byte-identical to NA1's committed `4-c` and
+  `3-c-basic`**, all 6 banks, after its recipe's banner and path clean-up. So the committed NA1 C
+  is the engine's output, and F1b changes it only by the 19 enum substitutions.
+- 3 new tests: alias identity, `-m` through an alias, NA1-only folds.
+
+**Engine issue for row G (not caused here):** `cfg_gate --dream` fails at `b1/$8327`,
+`b15/$D6B8`, `b15/$D6DE`, three of NA1's certified-fold subs. NA1's own engine at the last commit
+before graduation (`c0db804^`, run in a temporary worktree) fails identically, so it has been red
+since then. NA1's ROADMAP records it green (495/495) before the folds.
+
 ## Per-project revisits (after the toolset is complete; one session each)
 
 Chris, 2026-10-23: "focus on the task of creating the toolset ... have each revisit in its own
@@ -573,6 +639,10 @@ finished toolset, not just the items below.
 | game-annotation (Mappy) | `jump_tables.py` overwrites the curated `jump_tables.txt` (3 hand-added tables, 673a53d) | row B |
 | game-annotation (Mappy) | The committed `coverage.bin` / `codegraph.txt` (4,940 bytes covered, 158 edges) come from an older tracer; the current `trace_codegraph.py 4000` gives 5,024 / 162, the same before and after row C. The static pipeline (`static_expand` ...) is seeded from the stale pair. | row C |
 | all KOEI NES titles | Committed `.mlb` files added 2026-10-23; regenerate after registry edits | row A gap |
+| all KOEI NES titles | Committed `2-asm-vm` listings say "labels: 0 CPU addresses named"; a regeneration shows the real count | row F1b |
+| na1-decompiler | Regenerate `4-c` / `3-c-basic`: the engine restores 19 asset-enum names (`trigger_cutscene(CUTSCENE_…)`, `call_bank10_entry(AUDIO_…)`). `source/README.md` says `decompile_all` no longer runs: it does again. `v2-corpus.py` still loads the long-gone `decompile-all.py`. | row F1b |
+| gk-decompiler | `source/4-c/bank_05.c` `$8327` carries NA1's certified `scale_div10_capcheck` formula (leaked by address); a regeneration gives its real body | row F1b |
+| UW-decompile | `source/4-c/bank38.c` has `// DECOMPILE ERROR @$8327` (the leaked NA1 fold); a regeneration decompiles it | row F1b |
 
 ## Open questions (Chris)
 

@@ -24,10 +24,14 @@ from pathlib import Path
 # --- Asset-ID enums (2026-06-10) --------------------------------------------
 # Substitute named constants for the literal int args of "enum-typed" functions,
 # so trigger_cutscene(26) renders as trigger_cutscene(CUTSCENE_BRIBE). Data lives
-# in nobunaga/asset-enums.toml (next to mesen-labels.toml). Minimal parser — no
-# external toml dependency.
-def _load_asset_enums():
-    p = Path(__file__).resolve().parents[2] / "asset-enums.toml"
+# in a title's repo next to its mesen-labels.toml (only NA1 has one so far), found through the
+# title profile; set_schema(game) loads the title's own. The default is NA1's, for direct callers.
+# (The path used to be computed from this file's location; after koeivm left na1-decompiler it
+# pointed nowhere and the names silently dropped out. emu-harness MIGRATION.md row F1b.)
+# Minimal parser — no external toml dependency.
+def _load_asset_enums(game="na1"):
+    from emu_harness.vm.koei.titles import game_cfg
+    p = Path(game_cfg(game)["_root"]) / "asset-enums.toml"
     arg_enums, enums = {}, {}
     if not p.exists():
         return arg_enums, enums
@@ -57,7 +61,10 @@ _ARG_ENUMS, _ENUMS = _load_asset_enums()
 # comments + a stub `return <arg>`. Their formulas are CERTIFIED against the real
 # ROM (tools/value-oracle.py certify-extop). Emit the certified body instead.
 # Keyed by ENTRY addr; lambda takes the (renamed) param-name list.
-_EXTOP_OVERRIDE = {
+# These are NA1's (certified against NA1's ROM): set_schema(game) turns them off for every other
+# title. Applied to all titles by address, they gave Genghis Khan's bank-5 $8327 (different
+# bytecode) NA1's scale_div10_capcheck formula (emu-harness MIGRATION.md row F1b).
+_EXTOP_OVERRIDES_NA1 = _EXTOP_OVERRIDE = {
     0x8303: lambda p: [f"return (({p[0]} * {p[1]} + 9) / 10);    // [CERTIFIED ext-op fold vs ROM 2026-06-10]"],
     0x8327: lambda p: [f"return (((({p[0]} * {p[1]}) / 10) >= {p[2]}) ? 0xFFFF : (({p[0]} * {p[1]}) / 10));    // [CERTIFIED ext-op fold vs ROM 2026-06-10]"],
     0x8357: lambda p: [f"return min_word((({p[0]} * 10) / {p[1]}), {p[2]});    // [CERTIFIED ext-op fold vs ROM 2026-06-10]"],
@@ -407,9 +414,11 @@ CPP_VAR, CPP_FIELDS, ARG_FIELDS = _DEFAULT_SCHEMA
 PROV_FIELDS = NA1_PROVINCE_FIELDS   # back-compat alias
 
 def set_schema(game):
-    """Select the per-title record field maps (called by koei_vm.decompile)."""
-    global CPP_VAR, CPP_FIELDS, ARG_FIELDS
+    """Select the per-title record field maps and asset enums (called by koei_vm.decompile)."""
+    global CPP_VAR, CPP_FIELDS, ARG_FIELDS, _ARG_ENUMS, _ENUMS, _EXTOP_OVERRIDE
     CPP_VAR, CPP_FIELDS, ARG_FIELDS = _SCHEMAS.get(game, _DEFAULT_SCHEMA)
+    _ARG_ENUMS, _ENUMS = _load_asset_enums(game)
+    _EXTOP_OVERRIDE = _EXTOP_OVERRIDES_NA1 if game == "na1" else {}
 
 
 def annotate_field_access(expr, record_var="arg1", field_map=PROV_FIELDS):
@@ -2567,7 +2576,8 @@ def main():
     # Var-walk names: bank inferred from the listing filename (bank_NN_vm.asm).
     var_names = None
     try:
-        toml = Path(__file__).parent.parent / "mesen-labels.toml"
+        from emu_harness.vm.koei.titles import game_cfg      # NA1's labels (the standalone default)
+        toml = Path(game_cfg("na1")["_labels"])
         bm = re.search(r'bank_(\d+)', filepath)
         if bm:
             var_names = load_var_names(toml).get((int(bm.group(1)), sub_addr))

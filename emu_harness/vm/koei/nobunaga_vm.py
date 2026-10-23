@@ -19,12 +19,16 @@ from pathlib import Path
 
 from emu_harness.vm.koei.cpu6502 import Memory, CPU6502
 
-# Data anchors: ROM + labels live at the project root (nobunaga/), the opcode table ships
-# inside the package. _PKG = koeivm/, _ROOT = nobunaga/ (package -> tools -> nobunaga).
+# Data anchors: the default ROM + labels are NA1's, found through its title profile (games.toml
+# [na1]); the opcode table ships inside the package. (They used to be computed from this file's
+# location, which stopped pointing at NA1 when the package left na1-decompiler; MIGRATION.md F1b.)
+from emu_harness.vm.koei.titles import game_cfg as _game_cfg
+
 _PKG = Path(__file__).parent
-_ROOT = _PKG.parent.parent
-ROM_PATH = _ROOT / "Nobunaga's Ambition (USA).nes"
-LABELS_PATH = _ROOT / "mesen-labels.toml"
+_NA1 = _game_cfg("na1")
+_ROOT = Path(_NA1["_root"])
+ROM_PATH = Path(_NA1["_rom"])
+LABELS_PATH = Path(_NA1["_labels"])
 OPCODES_PATH = _PKG / "vm-opcodes-v2.toml"
 
 
@@ -32,16 +36,15 @@ OPCODES_PATH = _PKG / "vm-opcodes-v2.toml"
 # Label loading
 # ============================================================================
 
-def load_labels():
-    """Parse mesen-labels.toml without needing the tomllib dep (regex is fine).
+def load_labels(path=None):
+    """Parse mesen-labels.toml (`path`, default NA1's) without needing the tomllib dep (regex is fine).
 
     Returns: dict address (int) -> (name, comment).
     """
-    # koeivm is title-agnostic: the NA1-layout default LABELS_PATH may not exist (e.g. when
-    # driven by koei_vm for another title, which supplies labels separately). Degrade to empty.
-    if not LABELS_PATH.exists():
+    path = Path(path) if path else LABELS_PATH
+    if not path.exists():                     # degrade to empty (a title without a registry yet)
         return {}
-    text = LABELS_PATH.read_text(encoding="utf-8")
+    text = path.read_text(encoding="utf-8")
     labels = {}
     # Match lines like: "0x87F0" = { name = "effect_grow", comment = "..." }
     line_re = re.compile(
@@ -225,7 +228,7 @@ class NobunagaVM:
         self.rom = Path(rom_path).read_bytes()
         self.mem = Memory(self.rom)
         self.cpu = CPU6502(self.mem)
-        self.labels = load_labels()
+        self.labels = load_labels(labels_path)    # (labels_path used to be accepted and ignored)
         self.trace_enabled = False
         self.trace_log = []
         self.vm_call_depth = 0   # nested VM call depth — used for outermost-return detection

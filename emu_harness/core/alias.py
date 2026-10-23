@@ -17,17 +17,29 @@ class _Alias(importlib.abc.MetaPathFinder, importlib.abc.Loader):
     def __init__(self, old: str, new: str):
         self.old, self.new = old, new
 
+    def _real(self, fullname):
+        return self.new + fullname[len(self.old):]
+
     def find_spec(self, fullname, path=None, target=None):
-        if fullname.startswith(self.old + "."):
-            return importlib.util.spec_from_loader(fullname, self)
-        return None
+        if not fullname.startswith(self.old + "."):
+            return None
+        real = importlib.util.find_spec(self._real(fullname))
+        if real is None:
+            return None
+        return importlib.util.spec_from_loader(fullname, self, origin=real.origin,
+                                               is_package=real.submodule_search_locations is not None)
 
     def create_module(self, spec):
         # the real module; import machinery leaves its existing __name__ / __spec__ alone
-        return importlib.import_module(self.new + spec.name[len(self.old):])
+        return importlib.import_module(self._real(spec.name))
 
     def exec_module(self, module):
         pass                                      # already executed under its real name
+
+    def get_code(self, fullname):
+        """For `python -m old.x`: runpy runs the real module's code as __main__."""
+        real = self._real(fullname)
+        return importlib.util.find_spec(real).loader.get_code(real)
 
 
 def alias_package(old: str, new: str):

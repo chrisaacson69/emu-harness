@@ -156,7 +156,7 @@ def disasm(name, bank, out=None):
     VD.BANK_SIZE = cfg.get("bank_size", 0x4000)        # 0x2000 for MMC5 8K-bank titles (na2)
     base = bank_base_for(cfg, bank)                     # per-bank: $8000 (lib) vs $A000 (app), default bank_base
     VD.BANK_BASE = base
-    vm = NobunagaVM(rom_path=str(cfg["_rom"]))
+    vm = NobunagaVM(rom_path=str(cfg["_rom"]), labels_path=cfg["_labels"])
     vm.mem.bank_size = cfg.get("bank_size", 0x4000); vm.mem.bank_base = base
     vm.switch_bank(bank); mem = vm.mem
     labels = {a: n for a, (n, _c) in bank_scoped_labels(cfg, bank).items()}
@@ -288,7 +288,7 @@ def make_vm(name):
     disp = cfg["dispatcher"]
     class _VM(NobunagaVM):
         DISPATCHER_ADDR = disp
-    vm = _VM(rom_path=str(cfg["_rom"]))
+    vm = _VM(rom_path=str(cfg["_rom"]), labels_path=cfg["_labels"])
     vm.mem.bank_size = cfg.get("bank_size", 0x4000); vm.mem.bank_base = cfg.get("bank_base", 0x8000)
     return vm, cfg
 

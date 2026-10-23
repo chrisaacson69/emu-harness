@@ -26,12 +26,14 @@ import tempfile
 from contextlib import redirect_stdout
 from pathlib import Path
 
-# This module lives at koeivm/cli/; the project root (nobunaga/) is three levels up
-# (cli -> koeivm -> tools -> nobunaga). Add tools/ to sys.path so `koeivm` resolves
-# when run as a loose script as well as via `python -m koeivm.cli.decompile_all`.
-ROOT = Path(__file__).resolve().parents[3]
+# NA1's project root (nobunaga/) and labels, through its title profile (games.toml [na1]). They
+# used to be three levels up from this file, which stopped being NA1 when the package left
+# na1-decompiler (emu-harness MIGRATION.md row F1b).
+from emu_harness.vm.koei.titles import game_cfg as _game_cfg
 
-LABELS_TOML = ROOT / "mesen-labels.toml"
+ROOT = Path(_game_cfg("na1")["_root"])
+
+LABELS_TOML = Path(_game_cfg("na1")["_labels"])
 
 
 def _switchable_section_labels():

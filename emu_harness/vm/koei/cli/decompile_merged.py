@@ -29,7 +29,9 @@ import sys
 import tempfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[3]                     # nobunaga/ (cli->koeivm->tools->nobunaga)
+from emu_harness.vm.koei.titles import game_cfg as _game_cfg
+
+ROOT = Path(_game_cfg("na1")["_root"])                         # nobunaga/, through the [na1] profile (F1b)
 
 from emu_harness.vm.koei import nobunaga_vm
 
