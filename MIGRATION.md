@@ -81,7 +81,7 @@ The **oracle** is how the fold is proven to change nothing.
 | A2 | Symbol registry + merge | `mesen-labels.toml` (na1, ro3k, Elite, UW) · mappy `labels.toml`/`vars.toml` · koei-snes `symbols.py` · merge: ro3k `merge_data_labels`, mappy `merge_labels`, UW `gen_labels` (1,275 lines), AeroBiz `gen_data_labels` | `core/symbols` (one schema) | round-trip each repo's toml unchanged |
 | A3 | Apply labels to a listing | game-annotation `asm-relabel` · Elite `apply_labels` · mappy `asm_gen` · UW `stamp_prg` | `passes/listing` | identical `.asm` |
 | B | **6502 disassembly** ✅ | koei-nes `disasm6502` (imported by 24 files) · ro3k `subs` · rot3k2 `disn` · UW `disasm_native` (control-flow-following, paged) · GemFire `inbank_native` · Mappy `static_expand`, `jump_tables`, `stored_pointers`, `pointer_tables` · koei-nes `native_floor.reach` · *nes-disasm6* (third-party) | `cpu/m6502` (`disasm`, `descent`); nes-disasm6 plugin in `machines/nes` | each fork's output on its home ROM; the CPU-log benchmark |
-| C | 6502 CPU emulation | koei-nes `koeivm/cpu6502` · ro3k `emulator_rotk` · koei-nes `koei_vm` (emulate) | `cpu/m6502` | na1's `test-cpu6502` / `test-dispatcher` + value-oracle |
+| C | 6502 CPU emulation ✅ | koei-nes `koeivm/cpu6502` · game-annotation Mappy `trace_codegraph.TracingCPU` (the 18 missing opcodes) · (ro3k `emulator_rotk` and koei_vm's VM runner are VM-level, row F) | `cpu/m6502/cpu` | nestest golden log + na1's `test-cpu6502` / `test-dispatcher` / value-oracle, ro3k income test, Mappy trace + render |
 | D | **Native floor** (enumerate + name the kernel under the VM) | 7 NES forks (gk, na2, rot3k2, bk, GemFire, LEmp, UW) · koei-snes `native_floor` | `vm/koei/native_floor`, profile-driven | each title's current output, all 7 |
 | E | **Cross-title matchers** | ro3k `handler_match`, `bc_match` (gk has a verbatim copy), `native_match` · GemFire `multi_oracle` | `vm/koei/match` | same match tables |
 | F | **KOEI VM toolchain** | koei-nes `koeivm/*` + `koei_vm.py` · koei-snes `vm_*` · na1 `vm_assemble`, `vm-roundtrip`, `analyze-vm-opcodes`, `classify-handlers`, `gen-opcode-appendix`, `vm-opcode-labels` · wrappers: ro3k `vm_disasm_rotk`, `vm_decompile_rotk`, na1 `na1dream` alias, UW `disasm_fixed_bytecode` · opcode tables: `vm-opcodes-v2.toml`, `vm_opcode_names.toml` · retired candidate: game-annotation `vm-disasm` | `vm/koei` + `machines/{nes,snes}` syscall bindings | every title's decompiled C byte-identical |
@@ -144,7 +144,8 @@ to prove it fails.
    byte-identical through both import routes. ✅ **B done 2026-10-23**: one shared descent, nine
    copies folded, nes-disasm6 a plugin. See "Row B done" below. ✅ **N (NES half) done
    2026-10-23**: one bank-window model, 11 copies folded, `window_check` for the revisits. See "Row N
-   done" below. C (emulation) remains.
+   done" below. ✅ **C done 2026-10-23**: one complete 6502 core, verified on nestest. See "Row C
+   done" below.
 5. **F: the KOEI VM**: koei-nes + koei-snes → `vm/koei` + two bindings. The largest move.
 6. **G: DREAM.** Three implementations at very different maturity; needs an IR contract. Last.
 
@@ -517,6 +518,37 @@ stubs):
     address wrong.
   - **The profile is wrong, the label is right:** bk bank 28's `sound_engine_*` at `$80xx`.
 
+## Row C done: one 6502 core (2026-10-23)
+
+**There was only one core.** It was koei-nes `koeivm/cpu6502.py`, which na1's `na1dream` aliases.
+It held about 130 of the 151 documented opcodes: the ones KOEI's VM handlers use. Mappy's
+`trace_codegraph` completed it in a subclass with 18 more plus BRK, and its `nmi()` / BRK pushed a
+constant status byte. So every RTI after an NMI wiped N, V, Z and C. ro3k `emulator_rotk` and
+koei_vm's VM runner sit above the CPU (row F).
+
+**Now:**
+- `emu_harness/cpu/m6502/cpu.py` is the koei-nes class, converted (not rewritten), plus Mappy's 18
+  opcodes, a `p` property, and real interrupts. `nmi()`, `irq()` (masked by I) and BRK push the
+  actual flags, with B set only for BRK, and BRK returns past its padding byte.
+- Exactly the 151 documented opcodes: undocumented ones raise, matching the disassembler.
+- No decimal mode, because the 2A03 has none. Instruction counts only, no cycle timing.
+- koei-nes `koeivm/cpu6502.py` keeps its KOEI banked `Memory` (the console binding; it moves with
+  row F) and re-exports the core.
+- Mappy's `TracingCPU` is now just the core.
+
+**Oracles:**
+- **nestest** (kevtris's NES CPU test, with Nintendulator's golden log): the core matches PC, A,
+  X, Y, P and SP on all 5,003 documented-opcode lines (`tools/nestest.py`). The ROM and log are
+  third-party test data fetched into `_scratch/nestest/`, never committed.
+- **Baselines for comparison:** the old koei-nes core stopped at line 1,147 (`ORA ($80,X)`
+  unimplemented). Mappy's subclass passed all 5,003, because nestest never takes an interrupt.
+- **Every consumer, before and after:** na1's `test-cpu6502`, `test-dispatcher`,
+  `test-loadl-quick` and `value-oracle certify-extop`; ro3k's income ground-truth test; Mappy's
+  `render_level` (2 PNGs) and `trace_codegraph` (600 frames, and 4,000 frames). All byte-identical.
+  The interrupt fix changes nothing Mappy's demo reaches.
+- **6 tests:** nestest (skipped when the data is absent), the exact opcode set, BRK / NMI / IRQ /
+  PHP-PLP. Each of 8 planted mutations fails them, the old Mappy constant-P bug among them.
+
 ## Per-project revisits (after the toolset is complete; one session each)
 
 Chris, 2026-10-23: "focus on the task of creating the toolset ... have each revisit in its own
@@ -539,6 +571,7 @@ finished toolset, not just the items below.
 | LEmp-decompiler | Bank 27 (sound) runs at `$8000`; the profile says `$A000`. | row N `window_check` |
 | UW-decompile | `disasm_native` now renders 15 banks at their profile window (banks 8 and 17 among the committed listings), so a fresh run differs from the committed listings until the UW revisit regenerates them. 18 `nat_8_*` / `nat_17_*` labels carry `$Axxx` CPU addresses. | row N |
 | game-annotation (Mappy) | `jump_tables.py` overwrites the curated `jump_tables.txt` (3 hand-added tables, 673a53d) | row B |
+| game-annotation (Mappy) | The committed `coverage.bin` / `codegraph.txt` (4,940 bytes covered, 158 edges) come from an older tracer; the current `trace_codegraph.py 4000` gives 5,024 / 162, the same before and after row C. The static pipeline (`static_expand` ...) is seeded from the stale pair. | row C |
 | all KOEI NES titles | Committed `.mlb` files added 2026-10-23; regenerate after registry edits | row A gap |
 
 ## Open questions (Chris)
