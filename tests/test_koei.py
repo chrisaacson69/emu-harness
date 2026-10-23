@@ -161,3 +161,23 @@ def test_record_field_maps_come_from_the_profiles():
     assert VC.CPP_VAR == "current_province_ptr" and VC.ARG_FIELDS == {20: "liege", 43: "debt"}
     VC.set_schema("na1")
     assert VC.CPP_FIELDS[24] == "header" and VC.ARG_FIELDS is VC.CPP_FIELDS
+
+
+def test_na1_assets_match_the_live_ppu_capture():
+    """Row O2: the strategic map's terrain CHR starts at tile 81 ($83BC), not 91 -- tiles 81-90 are the
+    live map screen's PT1 (na1 traces/17fiefmapAPPU.dmp) and the tilemaps use them; and a composite face
+    is laid out by its bank-9 tile-map slices, not in upload order. Needs the sibling na1 checkout + ROM."""
+    import pytest
+    from emu_harness.vm.koei.nes.titles import game_cfg
+    from emu_harness.vm.koei.nes.assets import portrait, strategic_map as sm
+    cfg = game_cfg("na1")
+    cap = cfg["_root"] / "traces" / "17fiefmapAPPU.dmp"
+    if not (cfg["_rom"].exists() and cap.exists()):
+        pytest.skip("na1-decompiler ROM / PPU capture not present")
+    prg = sm._prg(cfg)
+    chr, pt1 = sm.assemble_chr(prg), cap.read_bytes()[0x1000:0x2000]
+    used = set().union(*(sm.section_tilemap(prg, s) for s in range(sm.NA1["n_sec"])))
+    assert {81, 87, 90} <= used
+    assert all(chr[v * 16: v * 16 + 16] == pt1[v * 16: v * 16 + 16] for v in used)
+    cells = portrait.composite_layout(prg, (1, 2, 3, 4))
+    assert len(cells) == 36 and cells != bytes(range(0x5B, 0x5B + 36))

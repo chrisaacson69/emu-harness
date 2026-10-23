@@ -15,8 +15,9 @@ the flexible canvas (cols/rows arbitrary) is exactly the big-map case.
 The KOEI engine format that STAYS here:
   - Tilemap : bank 4 $8D5C, 0x1C0 (=28x16) bytes per section, 9 sections (a pannable map).
   - Attrs   : bank 4 $9D1C, 0x20 (=32) bytes per section (BG sub-palette per 16x16 quad).
-  - CHR     : the map tileset uploads to PT1 $15B0 (= tile 91), bank4 byte $845C; tilemap cell V>=91
-              is terrain at $845C+(V-91)*16. Cells V<=80 are GAME-FONT glyphs (digits / region labels)
+  - CHR     : the map tileset occupies PT1 $1510.. (= tile 81) from bank4 byte $83BC; tilemap cell V>=81
+              is terrain at $83BC+(V-81)*16 (per the live PPU capture; tile 91 = $845C is just the
+              anchor older notes named). Cells V<=80 are GAME-FONT glyphs (digits / region labels)
               living in PT1 $1000.. from bank0 $B2BA. We build a unified CHR so V indexes straight in.
   - Palette : the 4 BG sub-palettes are an authoritative PPU capture (sub-pals 1-3 are inherited
               ambient state, not a ROM table). Stored as NES colour indices -> nes-render does the RGB.
@@ -39,8 +40,11 @@ NA1 = {
     "tilemap": 0x8D5C,        # 0x1C0 (=28*16) bytes/section
     "attr":    0x9D1C,        # 0x20 (=32) bytes/section
     "records": 0x9E3C,        # 34 bytes/section: (col,row,fief_id) triples, 0xFF-terminated
-    "chr_base": 0x845C,       # bank4 byte addr uploaded to PT1 tile 91
-    "chr_tile0": 91,          # tile index chr_base corresponds to
+    # bank4 terrain CHR: tile chr_tile0 <- chr_base, contiguous to tile 234. Grounded against the live
+    # map-screen PPU capture (na1 traces/17fiefmapAPPU.dmp, PT1): tiles 81-90 are the 160 bytes before
+    # the $845C (tile 91) anchor the docs name, and the tilemaps use them (cell 87 alone: 80x in sec 0).
+    "chr_base": 0x83BC,
+    "chr_tile0": 81,
     "sec_w": 28, "sec_h": 16,
     "n_sec": 9,
     "font_max_tile": 80,      # tilemap cell <= 80 is a FONT glyph; >= 81 is terrain
@@ -82,8 +86,8 @@ def assemble_chr(prg, cfg=NA1):
     """Build a unified 256-tile CHR blob keyed by tilemap cell value V, mirroring the game's CHR-RAM
     layout so a cell value indexes straight in (no per-cell font/terrain branch at decode time):
       V in 0..80  -> game-font glyph  (bank `font_bank` at font_addr + V*16)
-      V >= chr_tile0(91) -> map terrain (bank `map_bank` at chr_base + (V-91)*16)
-    Tiles 81..90 are the unused gap between the font block and the terrain block (left blank)."""
+      V >= chr_tile0(81) -> map terrain (bank `map_bank` at chr_base + (V-81)*16)
+    Any tile between the two blocks is left blank (none, for NA1)."""
     fb, fa = cfg["font_bank"], cfg["font_addr"]
     mb, cb, t0 = cfg["map_bank"], cfg["chr_base"], cfg["chr_tile0"]
     fmax = cfg["font_max_tile"]

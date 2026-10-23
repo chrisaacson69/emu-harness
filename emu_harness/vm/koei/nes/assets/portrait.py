@@ -25,9 +25,12 @@ from emu_harness.vm.koei.nes.titles import game_cfg, make_vm
 # ---- per-title portrait config (NA1; from project_nobunaga_daimyo_portraits) ----
 NA1 = {
     "portrait_bank": 8,
-    # COMPOSITE feature blocks: (name, cpu_base, stride_bytes, tiles_per_block); variant v -> base+v*stride
-    "features": [("brow", 0xA604, 192, 12), ("eyes", 0xA9C4, 96, 6),
-                 ("nose", 0xABA4, 96, 6), ("mouth", 0xAD84, 192, 12)],
+    # COMPOSITE feature blocks: (name, chr_base, stride_bytes, map_base, tile_base, tiles_per_block).
+    # Variant v uploads CHR chr_base+v*stride (portrait_bank) to virtual tiles tile_base.. and lays them
+    # out by the n-byte tile-index slice map_base+v*n (map_bank); the 4 slices concatenate to the 6x6 face.
+    "features": [("brow", 0xA604, 192, 0xAE34, 0x5B, 12), ("eyes", 0xA9C4, 96, 0xAE70, 0x67, 6),
+                 ("nose", 0xABA4, 96, 0xAE8E, 0x6D, 6), ("mouth", 0xAD84, 192, 0xAEAC, 0x73, 12)],
+    "map_bank": 9,
     "variants": 5,
     # PRESET (historical daimyo): a DEDICATED hand-drawn CHR block selected per mapid via a descriptor
     # table, laid out by a per-portrait 6x6 tile-index map.
@@ -90,20 +93,32 @@ def _pal16(four):
 
 
 def assemble_composite_chr(prg, variants, cfg=NA1):
-    """KOEI-specific: concatenate the chosen variant tiles of each feature block into one CHR blob."""
+    """KOEI-specific: concatenate the chosen variant tiles of each feature block into one CHR blob.
+    The blocks' tile bases are contiguous, so blob tile i is virtual tile features[0].tile_base + i."""
     bank = cfg["portrait_bank"]; blob = bytearray()
-    for (name, base, stride, ntiles), v in zip(cfg["features"], variants):
+    for (name, base, stride, _map, _tbase, ntiles), v in zip(cfg["features"], variants):
         off = bank * 0x4000 + ((base + v * stride) & 0x3FFF)
         blob += prg[off: off + ntiles * 16]
     return bytes(blob)                         # 12+6+6+12 = 36 tiles
 
 
+def composite_layout(prg, variants, cfg=NA1):
+    """KOEI-specific: the face's 36-cell tile map, each feature's variant slice from map_bank in turn."""
+    bank = cfg["map_bank"]; cells = bytearray()
+    for (name, _base, _stride, mbase, _tbase, ntiles), v in zip(cfg["features"], variants):
+        off = bank * 0x4000 + ((mbase + v * ntiles) & 0x3FFF)
+        cells += prg[off: off + ntiles]
+    return bytes(cells)
+
+
 def render_composite_face(prg, variants, *, cfg=NA1, scale=6, gray=True):
-    """Assemble a base-5 composite face and render it through the GENERIC renderer (6x6 tile grid)."""
+    """Assemble a base-5 composite face and render it through the GENERIC renderer: the feature tiles
+    as CHR, the concatenated map slices as a 6x6 nametable (cells outside the 36 tiles = colour 0)."""
     chr = assemble_composite_chr(prg, variants, cfg)
+    t0 = cfg["features"][0][4]
+    nametable = [(c - t0) & 0xFF for c in composite_layout(prg, variants, cfg)]
     pal = GRAY4 if gray else cfg["palette4"]
-    n = len(chr) // 16
-    return NR.render_chr_atlas(chr, count=n, cols=6, palette16=_pal16(pal), scale=scale)
+    return NR.render_tiles(chr, nametable, _pal16(pal), cols=6, rows=6, scale=scale, master=PAL_MASTER)
 
 
 def preset_descriptor(prg, mapid, cfg=NA1):

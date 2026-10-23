@@ -210,8 +210,8 @@ Then the port against na1:
 |---|---|---|
 | preset portraits (mapid 0, 5, 24, 49) | **EXACT** | port is good |
 | text (3 strings) | **STRUCTURE**: white `(255,255,255)` → `(236,238,236)` | port is good; the colour is nes-render's real NES white (intended) |
-| composite faces (3 codes) | **DIFFERENT** | **port bug:** `render_composite_face` lays the 36 tiles out in CHR order (`render_chr_atlas`) and never applies the face layout map, so the face is scrambled |
-| strategic map, all 9 sections | **DIFFERENT** | **port bug:** tiles match, attribute → sub-palette decode is wrong (black holes, olive for brown) |
+| composite faces (3 codes) | **DIFFERENT** | **port bug:** `render_composite_face` lays the 36 tiles out in CHR order (`render_chr_atlas`) and never applies the face layout map, so the face is scrambled. *Fixed in O2: EXACT.* |
+| strategic map, all 9 sections | **DIFFERENT** | **port bug:** ~~tiles match, attribute → sub-palette decode is wrong~~ the attribute decode was right; the port left tiles 81–90 blank (black holes). *Fixed in O2: STRUCTURE.* |
 | animation 10, 12 | same 10/20 frames and shapes; full canvas and a different palette | **undecided:** neither palette is proven; the truth is an emulator-rendered frame (Mesen `emu.takeScreenshot` via this harness) |
 
 **So the canon is mixed, and the fold for row O is:** take koei-nes's *structure* (KOEI layer
@@ -689,6 +689,46 @@ profile instead of in decompiler code.
 - **UW `field_census`**, code-driven field discovery over the C.
 
 A schema language that could express UW's tables is possible, but no second title needs it yet.
+
+## Rows O1–O2 done: one renderer, the KOEI asset layer fixed (2026-10-23)
+
+**O1, the move.**
+- nes-render's `nes_render.py` is now `machines/nes/ppu`, verbatim except for a provenance line.
+- koei-nes `assets/*` (animation, chr_extract, portrait, province_map, strategic_map, text) are now
+  `vm/koei/nes/assets/`; their `sys.path` hacks are replaced by package imports.
+- The old files stay behind as aliases: `py X.py` runs the moved module, and `import X` gives it.
+- Pillow is the optional `render` extra.
+- **Oracle:** all 56 asset images, before vs after the move, are identical. So are the 315 images
+  of the ro3k atlas, which imports these modules.
+
+**O2, the two port bugs** (measured above), each now pinned by
+`test_na1_assets_match_the_live_ppu_capture`:
+- **Composite faces: now EXACT on all 3 codes.**
+  - Each feature carries `(chr_base, stride, map_base, tile_base, n)`, as in na1's
+    `COMPOSITE_FEATURES`.
+  - The new `composite_layout` concatenates the four bank-9 tile-map slices. The face renders as a
+    6×6 nametable through `render_tiles` with the portraits' master palette.
+- **Strategic map: all 9 sections now STRUCTURE** (only the RGB master differs, as for text).
+  - The first diagnosis was wrong. The attribute decode matched na1's; every index mismatch was in
+    tilemap cells 81–90, which the port called an "unused gap" and drew blank.
+  - na1's map-screen PPU capture (`traces/17fiefmapAPPU.dmp`) settles it: PT1 tiles 81–90 are the
+    160 bank-4 bytes before `$845C`. The terrain upload starts at tile 81 (`$83BC`), not 91.
+  - Every tile the 9 maps use now equals the capture.
+  - na1 got these tiles right by extrapolating its tile-91 base backwards, so its own comment
+    (`$845C` → tile 91) names an anchor, not the upload's start.
+- **Re-check:** the render oracle changes exactly the 13 intended images (3 faces, 9 sections, the
+  panorama); the other 43 are byte-identical. The ro3k atlas is 315/315 identical, and 76 tests pass.
+
+**Still open in row O:**
+- **Retiring the na1 copies is a decision, not a move.**
+  - na1's `render-portrait` / `render-strategic-map` also carry what the port lacks: the name
+    generator, `random_faces`, the faithful-stitch variants.
+  - They draw with na1's own warm RGB table. The port uses that table (FCEUX) for portraits only;
+    text and map use nes-render's default.
+  - Thinning them to the port changes their committed PNGs' colours unless the KOEI layer adopts
+    one master for everything.
+- **O3:** the animation palette, against an emulator-rendered frame.
+- **O4:** the virtual-canvas contract, with a non-KOEI user (Zelda overworld).
 
 ## Row D done: one native-floor tool (2026-10-22)
 
@@ -1380,6 +1420,8 @@ finished toolset, not just the items below.
 | GemFire-decompiler | Its 32-bit ALU handler names (`ext_*`) sit one handler off. The ext-op dispatch table puts `$ED4E` at `$14` (push32) and `$EB16` at `$1E` (smod32), but they are named `ext_store_a_frame` / `ext_abs_b_to_a`; 15+ handlers are affected, and the names leak into the C's `// ext_op` comments. Rename from the table. | row E dispatch table |
 | bk-decompiler, GemFire-decompiler | `halve_a32` / `halve_a32_rounded` are ext ops `$1B` / `$1C`: the code adds 1 / `$FFFFFFFF` across `$08`, so `inc32` / `dec32`. | row E handler read |
 | UW-decompile, LEmp-decompiler | `vocabulary.toml` `[[conflict]]`s: LEmp `max_s16` = UW `min_s16` (identical code); UW `alu_*` names contradict their twins, and several match only on the 64-instruction signature prefix; UW `boot_banking_init` / `boot_init_oam` vs GemFire's names. Read, then settle. | row E `family` |
+| ro3k-decompiler | The committed `atlas/` (June) is stale: the pre-move code already regenerates `officers-index.png`, `off-001`, `off-200` and 2 more differently, and the moved code gives the same result (315/315). Regenerate and commit. | row O1 |
+| na1-decompiler | `render-strategic-map.py` and the strategic-map notes name `$845C` → PT1 tile 91 ($15B0) as the tileset upload; the live capture shows it starts at tile 81 (`$83BC`). Find the upload call and correct the comment / memory. | row O2 |
 | ro3k-decompiler | `vocabulary.toml` `[[conflict]]`s: `upload_vram_table_c380` = NA1/gk `reset_ppu_init`; `vm_illegal_opcode` = NA1 `vm_op_trigger_syscall_shared`; `scroll_timer_dec` = gk `sound_channel_timer`. | row E `family` |
 
 ## Open questions (Chris)
