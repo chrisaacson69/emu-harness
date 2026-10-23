@@ -60,9 +60,10 @@ class Memory:
                 other = 0x8000 if b == 0xA000 else 0xA000
                 return 0x10 + self.bank_lo * 0x2000 + (addr - other)
             return 0x10 + self.bank_lo * 0x4000 + (addr - 0x8000)
-        if 0xC000 <= addr <= 0xFFFF:
-            return 0x10 + 15 * 0x4000 + (addr - 0xC000)
-        return None
+        if 0xC000 <= addr <= 0xFFFF:                         # the fixed region: the LAST 16K of PRG
+            return 0x10 + (self.rom[4] - 1) * 0x4000 + (addr - 0xC000)
+        return None                                          # (was 16K bank 15: right only for 256K
+                                                             #  carts; UW's 512K banks 62/63 read 30/31)
 
     def read(self, addr):
         addr &= 0xFFFF

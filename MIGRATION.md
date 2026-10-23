@@ -151,7 +151,7 @@ to prove it fails.
    - ✅ **F1 2026-10-23:** koei-nes's VM package moves into `emu_harness.vm.koei`, with aliases.
    - ✅ **F1b:** NA1's file paths resolve through the title profile, and per-title data stays per
      title.
-   - **F2:** NES vs SNES opcode tables, one table.
+   - ✅ **F2:** NES vs SNES opcode tables measured; 12 NES decoder lengths and the 512K fixed bank fixed.
    - **F3:** separate the NES host binding; fold the wrappers (ro3k, na1, UW).
 
    See "Row F1 done" below.
@@ -615,6 +615,65 @@ missing-file error.
 before graduation (`c0db804^`, run in a temporary worktree) fails identically, so it has been red
 since then. NA1's ROADMAP records it green (495/495) before the folds.
 
+## Row F2 done: the NES and SNES instruction sets, measured (2026-10-23)
+
+Two toolchains grew independently over one engine:
+- **NES:** lengths in `nobunaga_vm.OPCODE_INFO` plus overrides in `vm_disasm.instr_len`, names in
+  `vm-opcodes-v2.toml`, control-flow sets hardcoded in `vm_disasm`.
+- **SNES:** one table, koei-snes `data/vm_opcode_names.toml`, which its loader `vm_isa.bind`
+  checks against each SNES ROM's handlers and raises on a mismatch.
+
+Two new tools:
+- **`tools/koei_isa_census.py`** compares them per opcode: NES decoder length + class vs the SNES
+  table read through its own loader.
+- **`tools/koei_isa_probe.py`** is the lower artifact. On each of the 9 NES titles it places an
+  opcode and zero operands in RAM, runs the cartridge's own dispatcher and handler for one
+  instruction, and reads how far the VM instruction pointer moved.
+
+**Found:**
+- **The NES decoder was wrong for 12 opcodes, and all 9 NES cartridges agree with the SNES table:**
+  - `$AD` blkcopy takes 2 operand bytes, not 1. `OPCODE_INFO` said 4; a hand reading of the
+    handler said 1.
+  - Bitfields `$E0`–`$E2` take `#i16`, not 1 byte.
+  - **`$B7 $0C`–`$13`** (32-bit load / store / push of a frame slot or absolute address) take a
+    2-byte operand, not 0. These occur **251 times in 7 titles** (gk, ro3k, na2, rot3k2, GemFire,
+    LEmp, UW). Each operand decoded as two opcodes; when those were `$EB`/`$FF`, the C showed fake
+    `trigger_syscall_EB_FE` / `op_FF` statements. ro3k's `ai_invest_commerce_and_distribute_capability_pay`
+    had a 57-parameter signature and a 128-underflow indirect call; it is now `(void)` and
+    `if (score_officer_capability_weight(...))`.
+- **The VM's NES bus hardcoded the fixed region as 16K bank 15**, which is right only for 256K
+  carts. So UW's banks 62 and 63 (512K) were decoded from banks 30 and 31's bytes, UW's
+  fixed-bank call targets were misclassified `{native}` / `{bytecode}`, and the probe could not
+  run UW at all. Now it is the last 16K of PRG, the same rule as row E's `fixed_bank`.
+  `read_banked` reads through it.
+- **UW's bank 63 was rendered at `$A000`:** `bank_base_for` skips fixed banks and the profile
+  does not list 63. The title driver now asks `windows(cfg)`, the full model (unchanged for the
+  MMC1 titles, whose path ignores it).
+- **Real per-revision differences, recorded, not fixed:**
+  - `$B2` is a NOP on every NES title and dead on SNES.
+  - Dead slots BRK on NA1 and return to the dispatcher on the MMC5 titles.
+  - The calling-convention / syscall differences are already profile data (`syscall_kind`,
+    `vm_entry_stub`, `bankcall_fn`, the ext-op table).
+
+**Now:**
+- The census agrees on **every live opcode: 217/217 primary, 47/47 extended** (size and
+  control-flow class).
+- The probe shows the NES decoder equal to the measured handlers on all 9 titles, for every
+  fall-through opcode.
+
+**Oracle for the fixes:** the full F run (876 outputs). Every changed file is explained:
+- 21 listings contain a fixed opcode;
+- UW banks 62 and 63 (the fixed bank);
+- 20 UW listings with fixed-bank call targets reclassified;
+- every changed C / log file follows its listing.
+
+**Tests:** the measured lengths, the census on every opcode, and the 512K fixed region (4
+planted reversions each fail them).
+
+**Still F:** the single physical table moves in with koei-snes's loader (`vm_isa`, the SNES half
+of row F). NES names stay NES-style until then. The two now provably describe one instruction
+set.
+
 ## Per-project revisits (after the toolset is complete; one session each)
 
 Chris, 2026-10-23: "focus on the task of creating the toolset ... have each revisit in its own
@@ -643,6 +702,8 @@ finished toolset, not just the items below.
 | na1-decompiler | Regenerate `4-c` / `3-c-basic`: the engine restores 19 asset-enum names (`trigger_cutscene(CUTSCENE_…)`, `call_bank10_entry(AUDIO_…)`). `source/README.md` says `decompile_all` no longer runs: it does again. `v2-corpus.py` still loads the long-gone `decompile-all.py`. | row F1b |
 | gk-decompiler | `source/4-c/bank_05.c` `$8327` carries NA1's certified `scale_div10_capcheck` formula (leaked by address); a regeneration gives its real body | row F1b |
 | UW-decompile | `source/4-c/bank38.c` has `// DECOMPILE ERROR @$8327` (the leaked NA1 fold); a regeneration decompiles it | row F1b |
+| gk, ro3k, na2, rot3k2, GemFire, LEmp, UW | Committed bytecode listings and C mis-decode `$B7 $0C`–`$13` (251 uses): operand bytes shown as `UNK` / `op_EB` / `op_FF`, sometimes fake `trigger_syscall_EB_FE` and phantom arguments (ro3k bank 3). A regeneration fixes them. | row F2 |
+| UW-decompile | Committed bank 62/63 listings and C decode banks 30/31's bytes (the 16K-bank-15 fixed-region bug). Bank 63 is also rendered at `$A000`, not `$E000`. Fixed-bank call targets are tagged wrongly in other banks. | row F2 |
 
 ## Open questions (Chris)
 

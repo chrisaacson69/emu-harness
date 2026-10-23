@@ -16,7 +16,9 @@ DECODE AUTHORITY (this is the whole point of the recovery):
     $D5 SWITCH_contiguous   : offs(2)+limit(2)+default(2) + limit*2  -> 7 + 2*limit
     $D9 SWITCH_noncontiguous: count(1)+1 + count*4 + default(2)      -> 5 + 4*count
   The bytes after these opcodes are the table (data); we emit them as `.table`.
-  $AD is 1 byte (count) per its handler $EB7D, overriding OPCODE_INFO's stale 4.
+  $AD takes 2 operand bytes, as do the bitfield ops $E0-$E2 and ext_ops $B7 $0C-$13: measured
+  by running each NES title's own handlers (tools/koei_isa_probe.py, MIGRATION.md F2). The
+  earlier reading here of $AD as 1 byte, and OPCODE_INFO's 4, were both wrong.
 
 SUBROUTINE TILING: bytecode subs begin with a 5-byte stub `20 23 E8 <frame:2>`
 (JSR $E823 = vm_entry, then a signed 16-bit frame offset); body starts at +5.
@@ -102,15 +104,17 @@ def instr_len(mem, pc):
     if op == 0xD9:                                 # SWITCH_noncontiguous
         count = mem.read(pc + 1) | (mem.read(pc + 2) << 8)
         return 5 + 4 * count
-    if op == 0xAD:                                 # COPY: 1 count byte (handler $EB7D)
-        return 2
     if op == 0xB7:                                 # LONG/ext_op: 1 index byte at pc+1,
-        idx = mem.read(pc + 1)                     # plus a 4-byte inline immediate for
+        idx = mem.read(pc + 1)                     # plus inline operand bytes for some:
         # ext_op $18/$19 = load_a32/b32_from_ptr3, which copy (ptr3),Y=0..3 and advance
-        # ptr3 by 4 (handlers $F4F4/$F500). All other ext_ops take no inline operand.
-        # Without this, the 4 immediate bytes get mis-decoded as opcodes (e.g. a 32-bit
-        # 0xFFFFFFFF reads as four $FF traps), corrupting the rest of the sub.
-        return 6 if idx in (0x18, 0x19) else 2
+        # ptr3 by 4 (handlers $F4F4/$F500): a 4-byte immediate. $0C-$13 (32-bit load / store /
+        # push of a frame slot or an absolute address) take a 2-byte operand: measured by
+        # running every NES title's own handlers (tools/koei_isa_probe.py), and the SNES table
+        # says the same (f16 / a16). They had 0 here, so their operand decoded as two opcodes
+        # (251 uses in 7 titles; MIGRATION.md F2). The rest take no inline operand.
+        if idx in (0x18, 0x19):
+            return 6
+        return 4 if 0x0C <= idx <= 0x13 else 2
     info = OPCODE_INFO.get(op)
     n = info[1] if info else 0
     if n < 0:
@@ -227,6 +231,10 @@ def walk_sub(mem, body, end, labels):
                 targets.add(tgt)
                 if tgt > pc:
                     max_target = max(max_target, tgt)
+        elif op == 0xB7 and ln == 4:                # ext_op $0C-$13: index, then a 16-bit operand
+            w = raw[2] | (raw[3] << 8)
+            lbl = labels.get(w) if 0x0010 <= raw[1] <= 0x0013 else None   # $10-$13: absolute
+            operand_str = f"${raw[1]:02X}, ${w:04X}" + (f" ({lbl})" if lbl else "")
         elif op in IMM_SIGNED_OPS and ln == 2:      # signed-decimal immediate
             b = raw[1]
             operand_str = f"{(b - 256 if b > 127 else b):+d}"

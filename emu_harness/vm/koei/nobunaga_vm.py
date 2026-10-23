@@ -145,7 +145,7 @@ def _init_opcode_info():
     OPCODE_INFO[0xAA] = ("PUSH_abs", 2)
     OPCODE_INFO[0xAB] = ("BYTE_PUSH_abs", 2)
     OPCODE_INFO[0xAC] = ("CALL_abs", 2)
-    OPCODE_INFO[0xAD] = ("COPY_imm2", 4)
+    OPCODE_INFO[0xAD] = ("COPY_imm2", 2)   # 2 operand bytes, measured on all 9 NES titles' handlers (was 4; MIGRATION.md F2)
     OPCODE_INFO[0xAE] = ("UNSTACK_imm1", 1)
     OPCODE_INFO[0xAF] = ("UNSTACK_imm2", 2)
     OPCODE_INFO[0xB0] = ("DEREF", 0)
@@ -196,9 +196,9 @@ def _init_opcode_info():
     OPCODE_INFO[0xDD] = ("CALLPTR", 0)
     OPCODE_INFO[0xDE] = ("LEAL_far", 2)
     OPCODE_INFO[0xDF] = ("LEAR_far", 2)
-    OPCODE_INFO[0xE0] = ("SLOADBF", 1)
-    OPCODE_INFO[0xE1] = ("ULOADBF", 1)
-    OPCODE_INFO[0xE2] = ("STOREBF", 1)
+    OPCODE_INFO[0xE0] = ("SLOADBF", 2)     # #i16 bitfield spec, measured on all 9 titles (was 1; F2)
+    OPCODE_INFO[0xE1] = ("ULOADBF", 2)
+    OPCODE_INFO[0xE2] = ("STOREBF", 2)
     OPCODE_INFO[0xE3] = ("JUMP_back", 1)
     OPCODE_INFO[0xE4] = ("JUMPT_back", 1)
     OPCODE_INFO[0xE5] = ("JUMPF_back", 1)
@@ -472,9 +472,9 @@ class NobunagaVM:
 
     def read_banked(self, bank, addr):
         """Read one byte as if `bank` were mapped into $8000-$BFFF. $C000+ is the
-        fixed bank 15; below $8000 is live RAM/SRAM (bank-agnostic)."""
+        fixed bank (the last 16K of PRG); below $8000 is live RAM/SRAM (bank-agnostic)."""
         if addr >= 0xC000:
-            return self.rom[0x10 + 15 * 0x4000 + (addr - 0xC000)]
+            return self.mem.read(addr)                       # Memory maps the fixed region
         if addr >= 0x8000:
             return self.rom[0x10 + (bank & 0x0F) * 0x4000 + (addr - 0x8000)]
         return self.mem.read(addr)

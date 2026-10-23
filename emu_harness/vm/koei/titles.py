@@ -154,7 +154,9 @@ def disasm(name, bank, out=None):
     VD.VM_ENTRY_STUB = bytes(int(b, 16) for b in cfg["vm_entry_stub"].split())
     VD.ROM_NAME = cfg["rom"]                            # per-title banner (was hardcoded NA1)
     VD.BANK_SIZE = cfg.get("bank_size", 0x4000)        # 0x2000 for MMC5 8K-bank titles (na2)
-    base = bank_base_for(cfg, bank)                     # per-bank: $8000 (lib) vs $A000 (app), default bank_base
+    base = windows(cfg).base(bank)                      # per-bank: $8000 (lib) vs $A000 (app), the cart's
+                                                        # fixed banks at $C000/$E000 (bank_base_for skips
+                                                        # those: UW's bank 63 rendered at $A000; F2)
     VD.BANK_BASE = base
     vm = NobunagaVM(rom_path=str(cfg["_rom"]), labels_path=cfg["_labels"])
     vm.mem.bank_size = cfg.get("bank_size", 0x4000); vm.mem.bank_base = base
