@@ -2,6 +2,7 @@
 
 The fold's oracle is the before/after run of every title's decompile (MIGRATION.md row F); these pin
 what that run cannot show on its own."""
+import re
 import subprocess
 import sys
 
@@ -119,3 +120,20 @@ def test_match_tokens_come_from_bytes_not_names():
     sw = [0xD9, 2, 0, 5, 0, 0x10, 0x80, 9, 0, 0x20, 0x80, 0x30, 0x80]   # n=2: (5 ->), (9 ->), default
     assert token(sw) == "D9 2 5 A 9 A A"
     assert token([0xB7, 0x18, 1, 2, 3, 4]).startswith("B7.18 ")
+
+
+def test_vocabulary_is_well_formed():
+    """vocabulary.toml: every routine has an anchor `title [bN] $ADDR` of a known title, a name, and
+    no name or anchor twice (the ROM-backed check -- each anchor is a real sub -- runs in `family`)."""
+    import tomllib
+    from emu_harness.vm.koei.nes import match, titles
+    voc = tomllib.loads(match.VOCABULARY.read_text(encoding="utf-8"))
+    known = set(titles.load_games())
+    anchors, names = [], []
+    for r in voc["routine"]:
+        m = match._ANCHOR.match(r["anchor"])
+        assert m and m.group(1) in known, r["anchor"]
+        assert re.fullmatch(r"[a-z][a-z0-9_]*", r["name"]), r["name"]
+        anchors.append(r["anchor"]); names.append(r["name"])
+    assert len(set(anchors)) == len(anchors) and len(set(names)) == len(names)
+    assert all(c.get("members") and c.get("why") for c in voc.get("conflict", []))

@@ -90,38 +90,68 @@ def clusters(subs, order, floor, min_len):
                   key=lambda g: (rank[g[0][0]], g[0][1]))
 
 
+VOCABULARY = Path(__file__).with_name("vocabulary.toml")
+_ANCHOR = re.compile(r"^(\w+)\s+(?:b(\d+)\s+)?\$([0-9A-Fa-f]{4})$")
+
+
+def vocabulary(subs, layer):
+    """{signature: (name, anchor)} from vocabulary.toml for this layer's anchors. An anchor that is
+    not a sub of its title (in the titles being run) stops the run: the file must stay grounded."""
+    import tomllib
+    voc = tomllib.loads(VOCABULARY.read_text(encoding="utf-8"))
+    out = {}
+    for r in voc.get("routine", []):
+        m = _ANCHOR.match(r["anchor"])
+        if not m:
+            sys.exit("vocabulary.toml: bad anchor %r" % r["anchor"])
+        t, bank, addr = m.group(1), m.group(2), int(m.group(3), 16)
+        if (bank is None) != (layer == "native") or t not in subs:
+            continue
+        key = ("fixed", addr) if bank is None else (int(bank), addr)
+        if key not in subs[t]:
+            sys.exit("vocabulary.toml: anchor %r is not a %s sub of %s" % (r["anchor"], layer, t))
+        out[tuple(subs[t][key][0])] = (r["name"], r["anchor"])
+    return out
+
+
 def family(order, floor, min_len, layer):
     get = native_title_subs if layer == "native" else title_subs
     subs = {t: get(t) for t in order}
     print("%s subs per title: %s" % (layer, ", ".join("%s %d" % (t, len(subs[t])) for t in order)))
+    voc = vocabulary(subs, layer)
     groups = clusters(subs, order, floor, min_len)
     fmt = lambda t, k: "%s %s$%04X" % (t, "" if k[0] == "fixed" else "b%02d " % k[0], k[1])
     renames = fills = reads = 0
-    print("\n%d twin clusters (>= %.2f, >= %d tokens). Canonical = the earliest title's name (games.toml"
-          " order = release order;\nkoei-nes docs/shared-library.md: NA1 is the established vocabulary)."
-          % (len(groups), floor, min_len))
+    print("\n%d twin clusters (>= %.2f, >= %d tokens). A name from vocabulary.toml (the reviewed names) is"
+          " marked [vocabulary];\notherwise the earliest title's name is the default (games.toml order ="
+          " release order; koei-nes docs/shared-library.md)." % (len(groups), floor, min_len))
     print("  RENAME = identical code, other name | READ = near twin, other name (shared-but-evolved:"
           " cross-ref, don't blind-rename) | FILL = unnamed here")
     for g in groups:
         named = [m for m in g if is_named(subs[m[0]][m[1]][1])]
         if not named:
             continue
-        canon = named[0]
-        cname, csig = subs[canon[0]][canon[1]][1], subs[canon[0]][canon[1]][0]
+        canon = next((m for m in g if tuple(subs[m[0]][m[1]][0]) in voc), named[0])
+        csig = subs[canon[0]][canon[1]][0]
+        cname, basis = voc.get(tuple(csig), (subs[canon[0]][canon[1]][1], None))
         lines = []
         for m in g:
             sig, nm = subs[m[0]][m[1]]
-            if m == canon or nm == cname:
+            target, own = cname, sig == csig
+            if not own and tuple(sig) in voc:                 # a near twin with a reviewed name of its own
+                target, own = voc[tuple(sig)][0], True
+            if nm == target:
                 continue
             if not is_named(nm):
                 tag = "FILL"; fills += 1
-            elif sig == csig:
+            elif own:
                 tag = "RENAME"; renames += 1
             else:
                 tag = "READ"; reads += 1
-            lines.append("    %-6s %-26s %s" % (tag, fmt(*m), nm or "-"))
+            lines.append("    %-6s %-26s %-40s -> %s" % (tag, fmt(*m), nm or "-", target if own else "(cross-ref %s)" % cname))
         if lines:
-            print("\n  %s  (%s, %d tokens; %d titles)" % (cname, fmt(*canon), len(csig), len({m[0] for m in g})))
+            print("\n  %s  (%s, %d tokens; %d titles)%s" % (cname, fmt(*canon), len(csig), len({m[0] for m in g}),
+                                                          "  [vocabulary]" if basis else ""))
             print("\n".join(lines))
     print("\nTOTAL: %d clusters; %d RENAME, %d READ, %d FILL" % (len(groups), renames, reads, fills))
 

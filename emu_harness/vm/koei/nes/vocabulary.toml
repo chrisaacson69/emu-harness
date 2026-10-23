@@ -1,0 +1,215 @@
+# Canonical names for KOEI NES routines shared across titles (emu-harness MIGRATION.md row E).
+#
+# `match family` finds twins mechanically; this file is the inference that names them. Each
+# [[routine]] names an ANCHOR ("<title> b<bank> $ADDR" for bytecode, "<title> $ADDR" for the fixed
+# bank's native code); every routine in any title whose signature is IDENTICAL to the anchor's takes
+# `name`. Near twins (a changed constant, an extra argument) are different functions: they keep their
+# own names unless they have an entry of their own.
+#
+# Rules used (Chris, 2026-10-23):
+#   - Name what the code does, at its own level: `ratio_percent`, not a caller's `calc_loyalty_gain`.
+#   - Pairs and families read alike (`char_to_upper` / `char_to_lower`, `*_saturating`, `blend_*`).
+#   - Settled by a lower artifact where one exists (the ext-op dispatch table, the handler's code),
+#     never by a vote of the titles' names.
+#   - Without a rule or an artifact, the earliest title's name (games.toml order = release order;
+#     koei-nes docs/shared-library.md: NA1 is the established vocabulary) stays the default.
+# [[conflict]] marks identical code under contradictory names that needs a read before anyone renames.
+
+# ---- bytecode: the shared core library ------------------------------------------------------
+[[routine]]
+anchor = "na1 b14 $8003"
+name = "busy_wait_delay"
+why = "Nested decrement busy-wait (arg1 x ~50). 'cutscene' is where NA1/ro3k's copy lives, not what it does; distinct from bank 15's frame delay `delay_loop`."
+
+[[routine]]
+anchor = "na1 b14 $801D"
+name = "draw_sprite_grid"
+why = "NA1/ro3k name kept. gk's copy is a near twin with wider arguments (READ), not renamed."
+
+[[routine]]
+anchor = "na1 b15 $CA97"
+name = "fill_bytes"
+why = "memset; shared-library.md's canonical name."
+
+[[routine]]
+anchor = "na1 b15 $CAB0"
+name = "strcmp"
+
+[[routine]]
+anchor = "na1 b15 $CAD9"
+name = "strcpy"
+
+[[routine]]
+anchor = "na1 b15 $CB94"
+name = "swap_word"
+
+[[routine]]
+anchor = "ro3k b15 $D02A"
+name = "itoa_append"
+why = "Recursive: appends a 32-bit value's decimal digits through a write pointer, returns the digit count (read: GemFire bank30.c). UW's `incr_deref_field` is wrong."
+
+[[routine]]
+anchor = "ro3k b15 $D435"
+name = "char_to_upper"
+
+[[routine]]
+anchor = "gk b15 $DA24"
+name = "char_to_lower"
+why = "The pair of `char_to_upper` (was tolower / to_lower)."
+
+[[routine]]
+anchor = "bk b31 $E1A3"
+name = "ratio_percent"
+why = "Chris: what it does. gk `win_probability_percent` / `odds_percent_clamped` and rot3k2 `calc_loyalty_gain` are callers' purposes."
+
+[[routine]]
+anchor = "gk b2 $9C7E"
+name = "field64_x10_div_capped"
+why = "min(arg1->field_64 * 10 / arg2, arg3) (read: gk bank_02.c / bank_03.c, two copies). bk's near twin reads `gold` and stays `max_affordable`."
+
+[[routine]]
+anchor = "gk b5 $97F6"
+name = "records_in_different_groups"
+why = "Compares two records' group fields; GemFire's `units_are_enemies` is the game meaning."
+
+[[routine]]
+anchor = "bk b31 $E30E"
+name = "mem_equal"
+why = "Returns 1 when n bytes are equal, else 0 (read): not C's memcmp ordering, so GemFire's `memcmp` misleads."
+
+[[routine]]
+anchor = "bk b31 $E13F"
+name = "muldiv"
+why = "a*b/c through the 32-bit ext ops."
+
+[[routine]]
+anchor = "gk b15 $DAAD"
+name = "sub_word_saturating"
+why = "Subtract, floored at 0. rot3k2 `reduce_unit_troops` is a near twin (extra ops), not renamed."
+
+[[routine]]
+anchor = "bk b31 $E242"
+name = "sub_byte_saturating"
+
+[[routine]]
+anchor = "bk b31 $E163"
+name = "add_word_clamped"
+
+[[routine]]
+anchor = "bk b31 $E229"
+name = "add_byte_clamped"
+
+[[routine]]
+anchor = "gk b15 $DAC2"
+name = "deduct_pct_word"
+why = "bk's `subtract_pct_word` is a near twin (an extra *100), not renamed."
+
+[[routine]]
+anchor = "bk b31 $E25A"
+name = "deduct_pct_byte"
+
+[[routine]]
+anchor = "bk b31 $E1CC"
+name = "blend_pct_clamped100"
+why = "Weighted blend of two values, min(.., 100). Its family: blend_clamped999 (gk), blend_unclamped (GemFire)."
+
+[[routine]]
+anchor = "gk b15 $DB48"
+name = "blend_clamped999"
+why = "The blend, capped at 999 (was calc_value_cap_999)."
+
+[[routine]]
+anchor = "gemfire b16 $803B"
+name = "blend_unclamped"
+why = "The blend with no cap; GemFire has two copies (`calc_interp`, `calc_army_sprite_pos`, the latter a caller's purpose)."
+
+[[routine]]
+anchor = "na2 b10 $B1CA"
+name = "dpad_to_direction"
+
+[[routine]]
+anchor = "gemfire b30 $CE80"
+name = "parse_uint"
+why = "UW's `loop_init_c4dc` is a placeholder."
+
+# ---- native: the 32-bit ALU, settled by each title's ext-op dispatch table -------------------
+# GemFire's `ext_*` names sit one handler off: its table puts $ED4E at ext op $14 (push32) and $EB16 at
+# $1E (smod32), the handlers na2/bk name push_a32_to_vm_stack / smod32. bk's and GemFire's
+# `halve_a32` / `halve_a32_rounded` are ext ops $1B / $1C: the code adds 1 / $FFFFFFFF across $08-$0B,
+# so inc32 / dec32 (the shared table's names).
+[[routine]]
+anchor = "bk $F145"
+name = "inc32"
+why = "Ext op $1B: adds 1 to the 32-bit value at $08 with carry (read). Was halve_a32."
+
+[[routine]]
+anchor = "bk $F140"
+name = "dec32"
+why = "Ext op $1C: adds $FFFFFFFF (Y=$FF) to $08 (read). Was halve_a32_rounded."
+
+[[routine]]
+anchor = "bk $EEEC"
+name = "umul32"
+why = "Ext op $01 (bk's table). GemFire `ext_mul32`."
+
+[[routine]]
+anchor = "bk $EF96"
+name = "smod32"
+why = "Ext op $1E (bk's table). GemFire `ext_abs_b_to_a` is off by one handler."
+
+[[routine]]
+anchor = "bk $F1CE"
+name = "push_a32_to_vm_stack"
+why = "Ext op $14 (push32). GemFire `ext_store_a_frame` is off by one handler."
+
+[[routine]]
+anchor = "bk $F1D7"
+name = "pop_b32_from_vm_stack"
+why = "Ext op $15 (pop32). GemFire `ext_load_b_frame` is off by one handler."
+
+[[routine]]
+anchor = "bk $F1ED"
+name = "load_a32_via_a_ptr"
+why = "Ext op $16 (ldL.mem). GemFire `ext_store_a_indirect` is off by one handler."
+
+[[routine]]
+anchor = "bk $F16A"
+name = "swap_a_b32"
+why = "Ext op $1A (swap32)."
+
+[[routine]]
+anchor = "bk $EFAA"
+name = "add32"
+
+[[routine]]
+anchor = "bk $EFB7"
+name = "sub32"
+
+# ---- native: one name per syscall, without UW's id prefix ------------------------------------
+# UW prefixes `syscall_idNN_`; the id is the slot, which the profile and the comment already carry.
+# Its twins in GemFire / LEmp carry the bare names, so the bare names are canonical. (Applied in
+# the UW revisit: `match family` lists each as a RENAME.)
+
+[[conflict]]
+members = "LEmp max_s16 = UW min_s16 (identical, 35 tokens)"
+why = "One of them is wrong; read the branch sense."
+
+[[conflict]]
+members = "na2 / LEmp vm_op_udiv16 = UW alu_div_push_remainder; na2 / rot3k2 vm_op_umod16 = UW alu_udiv16; GemFire vm_op_udiv16 = UW alu_abs16; LEmp mul_wide = UW rng_next; LEmp load_operand16_14 = UW rng_below"
+why = "UW's ALU names contradict their twins. Several match only on a 64-instruction prefix (the signature cap), so read the full handlers first."
+
+[[conflict]]
+members = "NA1 / gk reset_ppu_init = ro3k upload_vram_table_c380"
+why = "Read which describes it."
+
+[[conflict]]
+members = "NA1 vm_op_trigger_syscall_shared = ro3k vm_illegal_opcode = UW vm_op_default"
+why = "The dead-slot target; dead-slot behaviour differs per title (row F). Read each."
+
+[[conflict]]
+members = "ro3k scroll_timer_dec = gk sound_channel_timer"
+why = "Scroll engine or sound? Read."
+
+[[conflict]]
+members = "rot3k2 clear_ram_pages = GemFire boot_clear_memory = LEmp boot_clear_ram = UW boot_banking_init; GemFire boot_init_work_ram = LEmp / UW boot_init_oam; GemFire syscall_copy_block_to_ram0701 = LEmp syscall_set_sprite_block"
+why = "Boot / syscall names that contradict identical code. Read."

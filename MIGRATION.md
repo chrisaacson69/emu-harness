@@ -888,6 +888,26 @@ formatting) plus the native layer: 337 native twin clusters vs 44 bytecode. That
   `ratio_percent`. And some pairs need a read to know which side is right. Choosing the canonical
   name is inference (open question below).
 
+**The vocabulary: `vm/koei/nes/vocabulary.toml` (Chris: "inference > tool").** A quick inference pass
+over the clusters whose names disagree (26 bytecode, 76 native):
+- **Format:** each entry names an anchor routine, and every byte-identical routine in any title takes
+  its name. Near twins that differ by a constant are separate functions (cap 999 vs clamp 100 vs
+  uncapped: `blend_clamped999` / `blend_pct_clamped100` / `blend_unclamped`).
+- **Rules:**
+  - Name what the code does at its own level (`ratio_percent`, not `calc_loyalty_gain`).
+  - Pairs read alike (`char_to_upper` / `char_to_lower`, `*_saturating`).
+  - Settle by a lower artifact where one exists. GemFire's 32-bit ALU names were checked against
+    its ext-op dispatch table, and `inc32` / `dec32` against the handler code.
+  - Otherwise the earliest title stays the default.
+- **Reads behind entries:** GemFire's `memcmp` returns 1/0 (so `mem_equal`), and `itoa_append` is
+  recursive digit emission.
+- **Unsettled:** identical code under contradictory names that no cheap artifact settles stays a
+  `[[conflict]]` for the title's revisit (UW's ALU, LEmp/UW `max_s16`/`min_s16`, some boot and
+  syscall names).
+- **Grounded by construction:** `family` refuses to run if an anchor is not a real sub.
+- **Result:** 24 bytecode and 11 native clusters now take reviewed names. Proposals:
+  38 + 83 RENAME, 9 + 32 READ, 4 + 163 FILL.
+
 **Folded (each against its old output on the same inputs):**
 
 | old | now | oracle |
@@ -936,7 +956,11 @@ finished toolset, not just the items below.
 | UW-decompile | `gen_labels.py` no longer reproduces `mesen-labels.toml` (it writes 1,090 lines; the committed file has 1,468, grown by the walks). Running it overwrites walked names: retire it, or make it merge. | row E oracle |
 | UW-decompile | Names that contradict their byte-identical twins: `loop_init_c4dc` `$C4DC` = GemFire `parse_uint`; `incr_deref_field` `$C4FE` = ro3k `emit_decimal_digits_recursive` / GemFire `itoa_append`. | row E `family` |
 | rot3k2-decompiler | `native_bytecode_called.py` now finds 0 fixed-region `sub_XXXX` calls in the C (its input looks stale or fully named); check whether it is still needed. | row E oracle |
-| all KOEI NES titles | Cross-title name drift: `match family` finds 44 bytecode and 337 native twin clusters, with 30 + 76 RENAME, 14 + 26 READ and 4 + 163 FILL proposals. Apply after the canonical vocabulary is settled (open question below). | row E `family` |
+| all KOEI NES titles | Cross-title name drift: with `vocabulary.toml`, `match family` proposes 38 + 83 RENAME, 9 + 32 READ and 4 + 163 FILL (bytecode + native). Apply per title, then regenerate its `.mlb` / listings / C. | row E `family` |
+| GemFire-decompiler | Its 32-bit ALU handler names (`ext_*`) sit one handler off. The ext-op dispatch table puts `$ED4E` at `$14` (push32) and `$EB16` at `$1E` (smod32), but they are named `ext_store_a_frame` / `ext_abs_b_to_a`; 15+ handlers are affected, and the names leak into the C's `// ext_op` comments. Rename from the table. | row E dispatch table |
+| bk-decompiler, GemFire-decompiler | `halve_a32` / `halve_a32_rounded` are ext ops `$1B` / `$1C`: the code adds 1 / `$FFFFFFFF` across `$08`, so `inc32` / `dec32`. | row E handler read |
+| UW-decompile, LEmp-decompiler | `vocabulary.toml` `[[conflict]]`s: LEmp `max_s16` = UW `min_s16` (identical code); UW `alu_*` names contradict their twins, and several match only on the 64-instruction signature prefix; UW `boot_banking_init` / `boot_init_oam` vs GemFire's names. Read, then settle. | row E `family` |
+| ro3k-decompiler | `vocabulary.toml` `[[conflict]]`s: `upload_vram_table_c380` = NA1/gk `reset_ppu_init`; `vm_illegal_opcode` = NA1 `vm_op_trigger_syscall_shared`; `scroll_timer_dec` = gk `sound_channel_timer`. | row E `family` |
 
 ## Open questions (Chris)
 
@@ -952,11 +976,10 @@ finished toolset, not just the items below.
   2026-10-23:** yes. Both read disasm6 listings (na1's `bank_NN.asm`, made with nes-disasm6 per na1
   `tools/EXTERNAL.md`). It is kept as a plugin (`machines/nes/nes_disasm6.py`). Those two readers
   belong to row A3.
-- **The canonical routine vocabulary (row E).** The `family` report finds twins mechanically, but
-  picking a cluster's name is inference. Options: keep the earliest-title default; or run one
-  inference pass over the drifted clusters, bottom-up (leaf services first, as in the label walks),
-  that picks a functional name per cluster. Its result would become a committed vocabulary that the
-  report reads, converted from `shared-library.md`'s table.
+- ~~**The canonical routine vocabulary (row E).**~~ **Resolved 2026-10-23 (Chris: "inference >
+  tool"; `ratio_percent`, because that is what the low-level function does).** One quick inference
+  pass wrote `vm/koei/nes/vocabulary.toml`; see "Row E" above. Chris also expects the sharing to be
+  KOEI-specific: UW is the action-leaning outlier, and Zelda / Mappy should share little.
 - **na1-snes-decompiler** has no vault pointer (it is now in the path resolver).
 - Do the koei-nes and koei-snes repos get **archived** after step 5, as nes-harness was?
 - UW-decompile: GitHub remote, public or private? (Its siblings GemFire and LEmp are public.)
