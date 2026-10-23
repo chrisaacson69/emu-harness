@@ -13,6 +13,12 @@ filed under the bank that *uses* it):
                                                    offset = bank * $2000 + (addr & $1FFF)
 
 Any other section is located by address alone.
+
+The reverse direction, PRG offset -> CPU address, needs one more fact: the window a switchable bank
+runs in. `Windows` holds it. KOEI's MMC5 titles keep each bank in one window ("library" banks at
+$8000, app banks at $A000); a title profile lists them. The PRG offset stays the identity of a byte,
+and the CPU address is a view of it. `window_votes` is the evidence check: a bank's own code points
+at its own entry points at the address it was assembled for (MIGRATION.md row N).
 """
 from __future__ import annotations
 
@@ -71,3 +77,71 @@ def locate(cart: Cart, section: str, addr: int) -> tuple[str, int] | None:
     if 0x6000 <= addr <= 0x7FFF:
         return ("nes.save_ram" if cart.battery else "nes.work_ram"), addr - 0x6000
     return "nes.cpu_bus", addr
+
+
+@dataclass(frozen=True)
+class Windows:
+    """The CPU base each PRG bank runs at. Fixed banks come from the cart (MMC1: the last 16K bank
+    at $C000; MMC5: the last two 8K banks at $C000 / $E000); a switchable bank takes its entry in
+    `at`, else `default`."""
+    cart: Cart
+    default: int = 0x8000
+    at: tuple[tuple[int, int], ...] = ()       # (bank, base) pairs; a tuple keeps the class frozen
+
+    @classmethod
+    def from_profile(cls, cart: Cart, profile: dict) -> "Windows":
+        """From a title profile in the koei-nes games.toml schema: `bank_base` (the default) and
+        `banks_at_8000` / `banks_at_c000` / `banks_at_e000` lists. A bank in two lists takes the
+        first, in that order (as koei_vm.bank_base_for always did)."""
+        at: dict[int, int] = {}
+        for key, base in (("banks_at_8000", 0x8000), ("banks_at_c000", 0xC000), ("banks_at_e000", 0xE000)):
+            for b in profile.get(key, []):
+                at.setdefault(b, base)
+        return cls(cart, profile.get("bank_base", 0x8000), tuple(sorted(at.items())))
+
+    @property
+    def bank_size(self) -> int:
+        return BANK_SIZE[self.cart.mapper] or self.cart.prg_size
+
+    def fixed(self) -> dict[int, int]:
+        """bank -> base for the banks the mapper pins (empty for NROM)."""
+        last = self.cart.prg_size // self.bank_size - 1
+        return {1: {last: 0xC000}, 5: {last - 1: 0xC000, last: 0xE000}}.get(self.cart.mapper, {})
+
+    def base(self, bank: int, *, profile_only: bool = False) -> int:
+        """CPU base of `bank`. `profile_only` skips the cart's fixed banks: the old koei_vm answer,
+        kept so a caller can be moved onto this class without changing its output."""
+        if not profile_only and bank in self.fixed():
+            return self.fixed()[bank]
+        return dict(self.at).get(bank, self.default)
+
+    def cpu(self, prg_offset: int) -> int:
+        """The CPU address a PRG byte is seen at."""
+        bank, off = divmod(prg_offset, self.bank_size)
+        return self.base(bank) + off
+
+    def prg(self, bank: int, addr: int) -> int:
+        """PRG offset of `addr` in `bank` (the window-independent identity)."""
+        return bank * self.bank_size + (addr & (self.bank_size - 1))
+
+    def fits(self, bank: int, addr: int) -> bool:
+        """Is `addr` inside the window `bank` runs at? A label at an address its bank is never
+        seen at names the right byte through the wrong window."""
+        b = self.base(bank)
+        return b <= addr < b + self.bank_size
+
+
+def window_votes(buf: bytes, entries: set[int], bases: tuple[int, ...] = (0x8000, 0xA000),
+                 after: frozenset[int] | None = None) -> dict[int, int]:
+    """Evidence for where a bank runs: for each candidate base, how many little-endian words in
+    `buf` land exactly on one of `entries` (offsets into `buf` of the bank's own entry points, e.g.
+    KOEI's `JSR vm_entry` stubs) if the bank sits at that base. A call into another bank lands on
+    an arbitrary byte here and rarely on an entry, so it adds little noise.
+
+    `after` counts only words right after one of these bytes (e.g. {0x20, 0x4C}: JSR / JMP abs
+    operands). That is the fallback for a bank with no stubs (a native sound engine), with `entries`
+    = every documented-opcode offset. It is weaker: an app bank's calls into library banks in the
+    other window count too, so trust only a lopsided result."""
+    idx = range(1, len(buf) - 1) if after is not None else range(len(buf) - 1)
+    words = [buf[i] | buf[i + 1] << 8 for i in idx if after is None or buf[i - 1] in after]
+    return {b: sum(1 for w in words if (w - b) in entries) for b in bases}

@@ -92,7 +92,7 @@ The **oracle** is how the fold is proven to change nothing.
 | K | Data xref | na1 `data-xref`, `rom-xref` · koei-nes `data_xref` · mappy `var_xref` · rot3k2 `table_frontier` · koei-snes `data_walk` | `passes/xref` | identical xref reports |
 | L | Strings | bk + GemFire `pure_strings` (verbatim) · bk `ref_strings` · rot3k2 `extract_strings`, `strdump` · UW `dump_strings` · koei-snes `strings_snes` · na1 `ui-strings` | `passes/strings`; text encoding in the profile | identical string dumps |
 | M | Records / data dumps | koei-nes `dump_data` ~ ro3k `dump_data` (0.45) · bk `dump_records` · UW `dump_records`, `field_census` · koei-nes `RECORD_SCHEMAS.md` | `passes/records` | identical dumps |
-| N | **Address model** (ROM offset ↔ CPU address, banks) | UW `prg.py` ("PRG offset is the label identity") · koei_vm `game_cfg` ROM resolver · snes-decompiler `mapper`, `header_parse` | `machines/{nes,snes}/address` | self-tests + every title resolves the same |
+| N | **Address model** (ROM offset ↔ CPU address, banks) ✅ NES half | UW `prg.py` ("PRG offset is the label identity") · koei_vm `game_cfg` ROM resolver · snes-decompiler `mapper`, `header_parse` | `machines/{nes,snes}/address` | self-tests + every title resolves the same |
 | O | Rendering + asset decode | nes-render · koei-nes `assets/*`, `chr_extract` · na1 `render-*` (17) · mappy `render_level` | `machines/nes/ppu` (generic); KOEI formats in `vm/koei/assets` | identical PNGs |
 | P | Live emulator work | emu-harness backends · na1 `tools/lua/*` (13), `capture-test`, `mesen-dump`, `run-effect` · mappy `demo_in_real_game` · UW `trace_boot` | `backends/mesen` (+ probes); game Lua stays in the game | same SRAM / trace from same inputs |
 | Q | Trace decoding | na1 `combat-trace-decode`, `extract-chr-from-trace`, `title-nametable` · emu-harness `trace_diff` | `machines/nes/trace` | identical reconstructions |
@@ -142,8 +142,9 @@ to prove it fails.
    keeps a re-export (all public names, checked). Oracle: `validate` vs NA1's committed `bank_15.asm`
    (6,634 instructions, 0 mismatches) plus 73 bank listings of 5 ROMs (NROM/MMC1/MMC5),
    byte-identical through both import routes. ✅ **B done 2026-10-23**: one shared descent, nine
-   copies folded, nes-disasm6 a plugin. See "Row B done" below. C (emulation) and N (address model)
-   remain.
+   copies folded, nes-disasm6 a plugin. See "Row B done" below. ✅ **N (NES half) done
+   2026-10-23**: one bank-window model, 11 copies folded, `window_check` for the revisits. See "Row N
+   done" below. C (emulation) remains.
 5. **F: the KOEI VM**: koei-nes + koei-snes → `vm/koei` + two bindings. The largest move.
 6. **G: DREAM.** Three implementations at very different maturity; needs an IR contract. Last.
 
@@ -433,7 +434,7 @@ remainder as unverified.
 - The na1 handler classifiers (`classify-handlers`, `analyze-vm-opcodes`) use short fixed-length
   scans, not descents. They belong to row F.
 
-## Row N started: which window does each bank run in? (2026-10-23)
+## Row N evidence: which window does each bank run in? (2026-10-23)
 
 **Four copies of the bank-window list, and they disagree:** koei-nes `games.toml`
 (`banks_at_8000` per title), UW `prg.py` (the same as games.toml), UW `disasm_native`
@@ -463,12 +464,82 @@ banks at `$8000`.
 - **The 4 remaining same-byte collisions** (na2 x3, UW x1) are each a label at a CPU address its
   bank never runs at (`$A056` in a `$8000` bank, and so on): wrong-window duplicates.
 
-**Plan:**
-1. One window model in `machines/nes`, read from the title profile.
-2. Correct the profile from this evidence.
-3. UW `prg.py` / `disasm_native` and GemFire `inbank_native` consume it.
-4. Re-render and recount UW.
-5. Resolve the 4 wrong-window labels.
+## Row N done, NES half: one window model (2026-10-23)
+
+Per Chris, this row builds the tool; the project corrections it turns up go to the revisit table
+below.
+
+- `machines/nes/memory.py`:
+  - `Windows`: fixed banks from the cart (MMC1 last 16K at `$C000`; MMC5 last two 8K at
+    `$C000`/`$E000`), switchable banks from a profile via `from_profile`. It provides
+    `base` / `cpu` / `prg` / `fits`.
+  - `window_votes`: the evidence. Words landing on the bank's own entry points, or, with `after=`,
+    JSR/JMP operands only, the fallback for banks without stubs.
+  - 4 tests; each of 6 planted mutations fails them.
+- koei-nes: `koei_vm.windows(cfg)` is the one place a KOEI tool asks where a bank runs.
+  `bank_base_for` delegates to it, keeping its old profile-only answer, which ignores fixed banks.
+  New `tools/window_check.py <title>` checks a profile against the banks' own code and flags
+  registry labels outside their bank's window. It is the review tool for the revisits and changes
+  nothing.
+- **Folded: 11 copies of the window list or logic.** UW `prg.window`, `disasm_native.base_of`,
+  `native_banks.base_of`; GemFire `inbank_native.window`, `pure_strings.base_of`,
+  `call_hierarchy` (`AT_8000`/`AT_A000` now derived); bk `pure_strings`, `ref_strings`,
+  `bank_callgraph`, `walk_order`; rot3k2 `extract_strings`. koei_vm's own function makes 12.
+- **Oracle 1, every copy's own code (taken from git) vs the model, bank by bank, 6 titles:**
+  7 identical, and koei_vm identical for all 6 titles. Named differences:
+  - UW `disasm_native` / `native_banks` shared a private list that was wrong for 15 banks. The
+    model follows games.toml, which the bank evidence supports for all 15 (63 is fixed at `$E000`).
+  - rot3k2 `extract_strings` put banks 30 and 31 at `$A000`, but it skips those banks, so its
+    output is unchanged.
+  - GemFire `pure_strings` knew data bank 19 is read through `$8000` (its own `MEMORY_MAP.md`
+    says so too). That fact moved into games.toml `[gemfire] banks_at_8000`, so `inbank_native`
+    now agrees.
+- **Oracle 2, tool outputs vs the row-B state:**
+  - GemFire `inbank_native` (231 cases), native_floor (21 outputs) and ro3k: byte-identical.
+  - UW `disasm_native` renders change for exactly the 15 banks whose window changed. Bank 8's
+    decoded share rises from 25% to 77% at `$8000`, independent confirmation. The committed UW
+    listings were not regenerated (revisit).
+- **Not done here:** the profile corrections and label fixes (revisit table). The SNES half
+  (snes-decompiler `mapper`, `header_parse`) moves when the SNES tools do.
+
+**What `window_check` reports today** (the stub check, then the fallback for banks without
+stubs):
+- Every MMC5 title's sound-engine bank runs at `$8000` while its profile says `$A000`: na2,
+  rot3k2 and bk bank 28 (38:4, 40:1, 25:1); GemFire and LEmp bank 27 (39:1, 39:4).
+- GemFire bank 2 and UW banks 7, 13 and 59 are also at `$8000`.
+- 184 registry labels sit outside their bank's window: na2 139, bk 23, UW 18, rot3k2 3,
+  GemFire 1. They come in three kinds:
+  - **Filed under the bank that uses them**, while the byte lives in the bank sharing the other
+    window (na2's `*_data_A0xx` names in `$8000` banks 1, 2, 9, 12, 14, 16; bk bank 14's
+    `tbl_*`; rot3k2's `gauge_tile_data`, `ruler_stat_table`). `locate` then puts the name on the
+    wrong byte. That is the source of na2's 3 dropped `.mlb` names.
+  - **Rendered at the wrong base:** UW's `nat_8_*` / `nat_17_*`. The byte is right, the CPU
+    address wrong.
+  - **The profile is wrong, the label is right:** bk bank 28's `sound_engine_*` at `$80xx`.
+
+## Per-project revisits (after the toolset is complete; one session each)
+
+Chris, 2026-10-23: "focus on the task of creating the toolset ... have each revisit in its own
+session after the toolset is complete, otherwise we will keep looping." Gaps the toolset turns up
+are recorded here, not fixed in passing. Each revisit is a full audit of that project with the
+finished toolset, not just the items below.
+
+| Project | Found | By |
+|---|---|---|
+| UW-decompile | Native listings for banks 7, 8, 10, 13 and 17 were rendered at `$A000` but run at `$8000`. Recount the 555-sub inventory and the "106 recovered" figure. Re-render. | row N window evidence |
+| UW-decompile | games.toml `[uw]` windows wrong for banks 7, 10, 13 and 59 (all `$8000`) | row N |
+| UW-decompile | Bank 59: 966 bytes of executed native code with no labels, not in `native_banks` | row B CPU log |
+| UW-decompile | `$22B0A` named twice: `nat_17_0b0a` at `$AB0A` (bank 17 runs at `$8000`) vs `fleet_leaf_8b0a` | row N collision |
+| UW-decompile | `native_banks.walk_body` is a private copy of the row-E signature | row B residue |
+| GemFire-decompiler | Bank 2 is unwalked code at `$8000`: 48 bytecode stubs, no labels, not in `code_banks`. games.toml says `$A000`. | row N |
+| na2-decompiler | 139 labels outside their bank's window, mostly `*_data_A0xx` names filed under the `$8000` bank that uses them. They belong under the `$A000` partner bank, and `locate` puts them on the wrong byte; 3 of them displace correct names in the `.mlb`. Bank 28 (sound) runs at `$8000`; the profile says `$A000`. | row N `window_check` |
+| bk-decompiler | Bank 28 (sound) runs at `$8000`; the profile says `$A000`. Its 16 `sound_engine_*` labels are right. 7 bank-14 `tbl_*` labels are outside the window. | row N `window_check` |
+| rot3k2-decompiler | Bank 28 (sound) runs at `$8000`; the profile says `$A000`. 3 labels outside the window (`gauge_tile_data`, `scenario_ruler_data`, `ruler_stat_table`). | row N `window_check` |
+| GemFire-decompiler | Bank 27 (sound) runs at `$8000`; the profile says `$A000`. `native_battle_fx_driver` `$A313` filed under the `$8000` bank 12. | row N `window_check` |
+| LEmp-decompiler | Bank 27 (sound) runs at `$8000`; the profile says `$A000`. | row N `window_check` |
+| UW-decompile | `disasm_native` now renders 15 banks at their profile window (banks 8 and 17 among the committed listings), so a fresh run differs from the committed listings until the UW revisit regenerates them. 18 `nat_8_*` / `nat_17_*` labels carry `$Axxx` CPU addresses. | row N |
+| game-annotation (Mappy) | `jump_tables.py` overwrites the curated `jump_tables.txt` (3 hand-added tables, 673a53d) | row B |
+| all KOEI NES titles | Committed `.mlb` files added 2026-10-23; regenerate after registry edits | row A gap |
 
 ## Open questions (Chris)
 
