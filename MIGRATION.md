@@ -84,7 +84,7 @@ The **oracle** is how the fold is proven to change nothing.
 | C | 6502 CPU emulation ✅ | koei-nes `koeivm/cpu6502` · game-annotation Mappy `trace_codegraph.TracingCPU` (the 18 missing opcodes) · (ro3k `emulator_rotk` and koei_vm's VM runner are VM-level, row F) | `cpu/m6502/cpu` | nestest golden log + na1's `test-cpu6502` / `test-dispatcher` / value-oracle, ro3k income test, Mappy trace + render |
 | D | **Native floor** (enumerate + name the kernel under the VM) | 7 NES forks (gk, na2, rot3k2, bk, GemFire, LEmp, UW) · koei-snes `native_floor` | `vm/koei/native_floor`, profile-driven | each title's current output, all 7 |
 | E | **Cross-title matchers** | ro3k `handler_match`, `bc_match` (gk has a verbatim copy), `native_match` · GemFire `multi_oracle` | `vm/koei/match` | same match tables |
-| F | **KOEI VM toolchain** (F1 ✅) | koei-nes `koeivm/*` + `koei_vm.py` · koei-snes `vm_*` · na1 `vm_assemble`, `vm-roundtrip`, `analyze-vm-opcodes`, `classify-handlers`, `gen-opcode-appendix`, `vm-opcode-labels` · wrappers: ro3k `vm_disasm_rotk`, `vm_decompile_rotk`, na1 `na1dream` alias, UW `disasm_fixed_bytecode` · opcode tables: `vm-opcodes-v2.toml`, `vm_opcode_names.toml` · retired candidate: game-annotation `vm-disasm` | `vm/koei` + `machines/{nes,snes}` syscall bindings | every title's decompiled C byte-identical |
+| F | **KOEI VM toolchain** (F1, F2, SNES half ✅) | koei-nes `koeivm/*` + `koei_vm.py` · koei-snes `vm_*` · na1 `vm_assemble`, `vm-roundtrip`, `analyze-vm-opcodes`, `classify-handlers`, `gen-opcode-appendix`, `vm-opcode-labels` · wrappers: ro3k `vm_disasm_rotk`, `vm_decompile_rotk`, na1 `na1dream` alias, UW `disasm_fixed_bytecode` · opcode tables: `vm-opcodes-v2.toml`, `vm_opcode_names.toml` · retired candidate: game-annotation `vm-disasm` | `vm/koei` + `machines/{nes,snes}` syscall bindings | every title's decompiled C byte-identical |
 | G | **DREAM structuring** + its gates | koei-nes `dream.py` (1,918) · koei-snes `vm_struct` (159) · snes-decompiler `native_decompile` (602, a port) · gates: `cfg_gate`, `stack_audit`, na1 `detect-prop-clobber`, `v2-corpus`, `value-oracle` | `passes/structure` over a shared IR | decompiled C byte-identical; na1 V2 corpus |
 | H | Call graphs | bk `bank_callgraph` · GemFire `call_hierarchy` · UW `call_graph` · mappy `call_graph` · na1 `native-call-index`, `driver-call-index` · koei-snes `vm_callgraph` · snes-decompiler `native_callgraph` · rot3k2 `bank_hierarchy`, `native_bytecode_called` | `passes/callgraph` | identical edge sets |
 | I | Walk ordering (leaves first) | bk `walk_order` · UW `walk_bank` · ro3k `bc_layers` · na1 `bank-ground-order`, `cluster-anon-subs` · koei-snes `gen_layers` | `walk/order` | identical worklists |
@@ -673,6 +673,47 @@ planted reversions each fail them).
 **Still F:** the single physical table moves in with koei-snes's loader (`vm_isa`, the SNES half
 of row F). NES names stay NES-style until then. The two now provably describe one instruction
 set.
+
+## Row F, SNES half done: one engine package, one opcode table (2026-10-23)
+
+- **S1, the substrate.**
+  - snes-decompiler's `w65c816` (a pure decoder) became `cpu/w65c816/isa`.
+  - `mapper`, `header_parse`, `snes_regs`, `disasm65816` and `walk65816` became
+    `machines/snes/{mapper, header, regs, disasm, walk}`. The disassembler and walker read a ROM
+    through the SNES mapper, so they are machine code, which the CPU contract requires.
+  - snes-decompiler keeps six aliases: `import X` gives the moved module, and `py tools/X.py`
+    runs it. Its `native_decompile` / `native_callgraph` (rows G/H) import through them.
+- **S2, koei-snes.**
+  - The 22 tools moved into `vm/koei/snes`, and `games.toml` moved with them.
+  - Bare-name imports became package imports. One was a module named `profile` that shadowed
+    the stdlib's, and worked only because each script put its folder first on `sys.path`.
+  - `gen_layers` now runs its sub-tools as `-m` package modules.
+  - The new "VMs know no emulator" contract caught the label exporter importing the Mesen
+    backend: it is `tools/gen_mlb_koei_snes.py`, beside the NES exporter.
+  - koei-snes keeps 22 aliases; its `gen_mlb.py` runs the emu-harness tool.
+- **S3, one table.**
+  - The table is `vm/koei/vm_opcode_names.toml`, and its machine-neutral model (classes,
+    layouts, lift templates, `Op` / `Table`) is `vm/koei/isa.py`. Both moved verbatim out of
+    `vm_isa`, which keeps the SNES binding and re-exports the model. `minitoml` is
+    `vm/koei/minitoml`.
+  - The NES decoder now takes its operand lengths from that table: `vm_disasm.instr_len`, and
+    `OPCODE_INFO`, which is filled from the table and keeps its NES-dialect names.
+  - The NES-only `$B2` NOP and the dead slots keep their entries. The census and probe tools
+    import the package.
+- **Oracle.**
+  - The SNES run: 7 ROMs (header, disasm, walk, root walk), NA1-SNES's
+    `native_decompile` / `native_callgraph`, and the 3 KOEI titles (`vm_opcodes`, `vm_walk`,
+    native floor, per-module call graphs, `vm_disasm`, plus `gen_layers` and `gen_mlb` on
+    copies): **439 outputs**. Identical through S1, S2 and S3, except 3 runs that already failed
+    (Aerobiz Supersonic is not a KOEI root layout; rot3k2's `cbmdata1` and GemFire's `native` are
+    not bytecode modules), which fail with the same error through the alias.
+  - The NES run after S3: all **889 outputs identical**.
+  - A planted change to the table (`$B7 $0C` `f16` → `f8`) fails the tests.
+
+The calling-convention and syscall differences (NES fake-BRK vs SNES `JSL` ABI, the param block,
+the per-title tables) remain host and profile data: `vm/koei/games.toml` (NES) and
+`vm/koei/snes/games.toml` (SNES), two profile schemas. **Still in F:** F3 (separate the NES host
+binding: `nobunaga_vm` + its `Memory`; fold the ro3k / na1 / UW wrappers) and one profile schema.
 
 ## Per-project revisits (after the toolset is complete; one session each)
 

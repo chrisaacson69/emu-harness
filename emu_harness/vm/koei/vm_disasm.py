@@ -43,6 +43,7 @@ import re
 import sys
 from pathlib import Path
 
+from emu_harness.vm.koei.isa import TABLE as ISA_TABLE
 from emu_harness.vm.koei.nobunaga_vm import NobunagaVM, OPCODE_INFO
 
 ROM_NAME = "Nobunaga's Ambition (USA).nes"  # default (NA1); per-title callers (koei_vm) override from games.toml
@@ -104,17 +105,13 @@ def instr_len(mem, pc):
     if op == 0xD9:                                 # SWITCH_noncontiguous
         count = mem.read(pc + 1) | (mem.read(pc + 2) << 8)
         return 5 + 4 * count
-    if op == 0xB7:                                 # LONG/ext_op: 1 index byte at pc+1,
-        idx = mem.read(pc + 1)                     # plus inline operand bytes for some:
-        # ext_op $18/$19 = load_a32/b32_from_ptr3, which copy (ptr3),Y=0..3 and advance
-        # ptr3 by 4 (handlers $F4F4/$F500): a 4-byte immediate. $0C-$13 (32-bit load / store /
-        # push of a frame slot or an absolute address) take a 2-byte operand: measured by
-        # running every NES title's own handlers (tools/koei_isa_probe.py), and the SNES table
-        # says the same (f16 / a16). They had 0 here, so their operand decoded as two opcodes
-        # (251 uses in 7 titles; MIGRATION.md F2). The rest take no inline operand.
-        if idx in (0x18, 0x19):
-            return 6
-        return 4 if 0x0C <= idx <= 0x13 else 2
+    if op == 0xB7:                                 # LONG/ext_op: 1 index byte at pc+1, then the
+        e = ISA_TABLE.extended.get(mem.read(pc + 1))   # ext op's operand, from the shared table:
+        # $18/$19 (load_a32/b32_from_ptr3) a 4-byte immediate; $0C-$13 (32-bit load / store / push
+        # of a frame slot or absolute address) 2 bytes -- these had 0 here until MIGRATION.md F2
+        # measured every NES title's own handlers (tools/koei_isa_probe.py; 251 uses in 7 titles
+        # had their operand decoded as two opcodes). The rest take none.
+        return 2 + (e.size if e else 0)
     info = OPCODE_INFO.get(op)
     n = info[1] if info else 0
     if n < 0:

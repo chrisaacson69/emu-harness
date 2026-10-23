@@ -17,9 +17,7 @@ import sys
 from emu_harness.vm.koei import titles
 from emu_harness.vm.koei import vm_disasm as VD
 from emu_harness.vm.koei.nobunaga_vm import OPCODE_INFO
-
-sys.path.insert(0, str(titles.SIBLINGS / "koei-snes" / "tools"))
-import vm_isa  # noqa: E402
+from emu_harness.vm.koei.snes import vm_isa
 
 BUF = 0x0300
 CONTROL = {0xAC, 0xCF, 0xD5, 0xD6, 0xD7, 0xD8, 0xD9, 0xDD, 0xE3, 0xE4, 0xE5, 0xE6, 0xE7, 0xE8, 0xE9, 0xEA, 0xB7}

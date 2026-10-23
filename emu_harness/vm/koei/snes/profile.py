@@ -61,7 +61,7 @@ def run_cli(main, argv=None):
 
 
 def _read_all():
-    from emu_harness.vm.koei.snes import minitoml
+    from emu_harness.vm.koei import minitoml
     games = minitoml.load_file(_GAMES)
     for name, g in games.items():
         fh_ = g.get("fetch_helpers")

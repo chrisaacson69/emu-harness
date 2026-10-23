@@ -211,6 +211,21 @@ def _init_opcode_info():
 _init_opcode_info()
 
 
+def _lengths_from_the_shared_table():
+    """Operand lengths come from the ONE opcode table (emu_harness.vm.koei.isa, vm_opcode_names.toml),
+    which MIGRATION.md row F2 measured against every NES title's own handlers. The names above stay
+    NES-dialect. Kept from above: the switches' markers ($D5/$D9 are variable; vm_disasm sizes them),
+    the NES-only $B2 NOP (dead on SNES), and the dead slots."""
+    from emu_harness.vm.koei.isa import TABLE
+    for op, (name, _n) in list(OPCODE_INFO.items()):
+        o = TABLE.primary.get(op)
+        if op >= 0x80 and o is not None and o.size is not None:
+            OPCODE_INFO[op] = (name, o.size)
+
+
+_lengths_from_the_shared_table()
+
+
 # ============================================================================
 # VM Runner
 # ============================================================================

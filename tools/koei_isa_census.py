@@ -7,7 +7,7 @@ numbers line up"). This lists, per primary opcode and per $B7-extended opcode, w
   NES   the encoded length emu_harness.vm.koei.vm_disasm.instr_len uses (with zero operand bytes;
         a switch is "var"), the mnemonic (nobunaga_vm.OPCODE_INFO), and the control-flow class its
         decoder implies (vm_disasm's terminator / branch / call sets)
-  SNES  koei-snes data/vm_opcode_names.toml through its own loader (vm_isa): name, cf, size, dead
+  SNES  the shared table, vm/koei/vm_opcode_names.toml, through its SNES loader (vm_isa): name, cf, size, dead
 and classifies each as agree / size differs / class differs / dead on one side. The SNES table is
 ROM-verified on 3 SNES titles (vm_isa.bind raises on any mismatch); the NES lengths are the ones the
 NES decoder tiles 9 titles' banks with. A difference is a question for the handlers, not a verdict.
@@ -20,9 +20,7 @@ from pathlib import Path
 from emu_harness.vm.koei import vm_disasm as VD
 from emu_harness.vm.koei.nobunaga_vm import OPCODE_INFO
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "koei-snes" / "tools"))
-import vm_isa  # noqa: E402  (koei-snes: the SNES table's one loader)
+from emu_harness.vm.koei.snes import vm_isa  # noqa: E402  (the shared table, through its SNES loader)
 
 NES_CF = {0xCF: "ret", 0xD6: "jmp", 0xD7: "cjmp", 0xD8: "cjmp", 0xE3: "bra", 0xE6: "bra",
           0xE4: "cbra", 0xE5: "cbra", 0xE7: "cbra", 0xE8: "cbra", 0xD5: "switch", 0xD9: "switch",

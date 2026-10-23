@@ -51,10 +51,6 @@ def test_nes_decoder_agrees_with_the_snes_table():
     import importlib.util
     from pathlib import Path
     tool = Path(__file__).resolve().parents[1] / "tools" / "koei_isa_census.py"
-    snes = Path(__file__).resolve().parents[2] / "koei-snes" / "tools" / "vm_isa.py"
-    if not snes.exists():
-        import pytest
-        pytest.skip("koei-snes is not a sibling checkout")
     spec = importlib.util.spec_from_file_location("census", tool)
     census = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(census)
