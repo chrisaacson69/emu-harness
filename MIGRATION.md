@@ -654,6 +654,41 @@ name themselves, so a routine that references `msg_recruit` is the recruit comma
 **Text encoding:** every title here is ASCII ended by `$00`, with `$0A` / `$1B`. A profile key
 arrives with the first title that differs.
 
+## Row M done: records and data reads (2026-10-23)
+
+Chris: "interesting to see how much is generalizable and how much is title specific." The answer:
+the **machinery** generalizes (reading bytes, strings and pointer tables at `(bank, addr)`; a
+fixed-stride record table). The **schemas** are title knowledge, and they now live with each title's
+profile instead of in decompiler code.
+
+**Moved to the profile:**
+- **The decompiler's record field maps** (`arg1->gold` style), the per-title literals in
+  `vm_decompile.py`, are now `[<title>.fields]` in games.toml for all 9 titles, each with its
+  provenance comment: SRAM-verified, manual-verified, command-cap-verified, "the NA1 default was
+  WRONG here". `set_schema` reads them. The loaded maps equal the old literals exactly for every
+  title and the module default, and the NES run is identical.
+- **ROM record tables** are `[<title>.records.<name>]`: bank, the CPU address the code reads, the
+  window it reads it through, stride, count, layout. bk's two bank-27 tables are the first.
+
+**Now `vm/koei/nes/romdata.py`:**
+- **`peek`** is koei-nes / ro3k `dump_data`, the identical tool except for a game argument. Its
+  offset `bank*0x4000 + (cpu & 0x3FFF)` was right only for 16K MMC1 titles. On 8K MMC5 titles
+  (na2, bk, rot3k2, GemFire, LEmp, UW) it read another bank: bk bank 2 `$AE98` gave `'.E...'`
+  where the registry's `msg_old_to_give` reads `'old to give.'`. The window model reads the right
+  bytes, and a pointer into the fixed window reads the fixed bank.
+  - Identical on 9 cases (NA1, gk, ro3k; all three modes).
+- **`records`** is bk `dump_records` over the profile tables: char and pref identical.
+- **Thin CLIs:** koei-nes `dump_data`, ro3k `dump_data`, bk `dump_records`. koei-nes
+  `RECORD_SCHEMAS.md` points at the profile.
+
+**Stays per title, because it is knowledge, not machinery:**
+- **UW `dump_records`.** Its port layout was corrected by reading `find_port_by_key` (meta after
+  the name; the first draft was off by one record and "mostly fit" geography); its ship stats are
+  formula-derived; its regional goods seeds are nested arrays.
+- **UW `field_census`**, code-driven field discovery over the C.
+
+A schema language that could express UW's tables is possible, but no second title needs it yet.
+
 ## Row D done: one native-floor tool (2026-10-22)
 
 **Shape.** The 7 copies were not one algorithm with per-title constants: they were 7 stages of

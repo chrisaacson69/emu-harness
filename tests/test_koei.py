@@ -149,3 +149,15 @@ def test_dataxref_kinds_come_from_the_lift_templates():
         ["read", "read", "read", "read", "write", "write", "read", "read"]
     assert [k(c) for c in (0x8A, 0x8C, 0x8E)] == ["ptr"] * 3
     assert k(0x90) is None and k(0xAF) is None and k(0xAC) is None     # addA #i16, sp_adj, a call
+
+
+def test_record_field_maps_come_from_the_profiles():
+    """vm_decompile's per-title field maps live in games.toml [<title>.fields] (row M)."""
+    import emu_harness.vm.koei.nes.vm_decompile as VC
+    VC.set_schema("gemfire")
+    assert (VC.CPP_VAR, VC.CPP_FIELDS, VC.ARG_FIELDS) == ("", {2: "gold", 4: "food", 6: "soldiers", 14: "owner"},
+                                                          {2: "gold", 4: "food", 6: "soldiers", 14: "owner"})
+    VC.set_schema("na2")
+    assert VC.CPP_VAR == "current_province_ptr" and VC.ARG_FIELDS == {20: "liege", 43: "debt"}
+    VC.set_schema("na1")
+    assert VC.CPP_FIELDS[24] == "header" and VC.ARG_FIELDS is VC.CPP_FIELDS

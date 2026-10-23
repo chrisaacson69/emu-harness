@@ -467,3 +467,124 @@ extra_seeds    = [
     0xE1FD, 0xE299, 0xE338, 0xE395, 0xE3BA, 0xE3F0, 0xE415, 0xE445, 0xE485, 0xE4BF, 0xEED4, 0xEF81,
     0xEFB0, 0xF33A,
 ]
+
+# ============================================================================================================
+# RECORD FIELD MAPS (row M of emu-harness MIGRATION.md; moved here from vm_decompile.py, which reads them in
+# set_schema). The KOEI games REUSE record offsets with different meanings, so the decompiler's field map is
+# per title. Word fields annotate (`arg1->gold`); byte stats stay raw and are documented with the record.
+#   province_var  the per-title "active province" global whose word fields are named ("" = none)
+#   province      offset -> name for that global's record
+#   arg           offset -> name for an argN record, or "province" = the same map
+# Full record schemas (byte fields too): koei-nes tools/RECORD_SCHEMAS.md and each title's docs.
+# ============================================================================================================
+
+# NA1 (SRAM-VERIFIED via live save dumps -- na1-decompiler 07-sram-save-layer.md):
+#   PROVINCE ($7001, stride 26, LE): +0 gold +2 debt +4 town +6 rice +8 output +10 dams +12 loyalty
+#     +14 wealth +16 men +18 morale +20 skill +22 arms +24 header. (argN is a PROVINCE record in NA1.)
+#   DAIMYO ($752F, stride 7, bytes): +0 age +1 health +2 drive +3 luck +4 charisma +5 iq +6 status.
+#   [NA1 has NO per-officer record; daimyo bytes don't word-annotate -- see the doc.]
+[na1.fields]
+province_var = "current_province_ptr"
+province = { 0 = "gold", 2 = "debt", 4 = "town", 6 = "rice", 8 = "output", 10 = "dams", 12 = "loyalty", 14 = "wealth", 16 = "men", 18 = "morale", 20 = "skill", 22 = "arms", 24 = "header" }
+arg = "province"
+
+# ROTK province/state record (draw-verified vs the status screen + manual Country Data; word fields only --
+# the byte fields land_value@4/flood_control@5/loyalty@8/horses@9/flags@11 are in RECORD_SCHEMAS.md).
+# argN is mixed (officer OR province) so arg = {} (no false labels); the province global carries the names.
+[ro3k.fields]
+province_var = "active_province_rec"
+province = { 0 = "gold", 2 = "rice", 6 = "population" }
+arg = {}
+
+# gk: records are complex (field81 sub-records; arms@20 / skill@22, OPPOSITE NA1) -> not wired yet.
+[gk.fields]
+province_var = ""
+province = {}
+arg = {}
+
+# NA2 (MANUAL-VERIFIED -- Samurai/Fief Data + BUILD menu; data-walk 2026-06-29):
+#   FIEF ($604D, stride 25): +4 gold +6 rice +8 trade(Expand Town) +10 support(b) +11 castle_defense
+#     +13 gate_defense +17 tax_rate(b) +18 flood_control +20 lord_ptr +22 commander_ptr +24 header(b).
+#   OFFICER/SAMURAI ($6403, stride 46, argN): +0 age +2 POLITICS +3 WAR +4 CHARISMA +5 AMBITION (the
+#     4-stat ICON block) +6 status +7 location +8 face +9 loyalty +11 soldier_skill +12 soldiers(b)
+#     +13 flags(b,&4=captured) +20 liege_ptr +43 debt(daimyo loan princ+interest) +45 flags2.
+#   BATTLE-UNIT ($6AD8, stride 14): not yet walked.
+[na2.fields]
+province_var = "current_province_ptr"
+province = { 4 = "gold", 6 = "rice", 8 = "trade", 11 = "castle_defense", 13 = "gate_defense", 18 = "flood_control", 20 = "lord", 22 = "commander" }
+arg = { 20 = "liege", 43 = "debt" }
+
+# ROTK2 (MANUAL-VERIFIED names + code-verified offsets; data-walk 2026-06-30). Records: officer master-list
+# $6031 stride21, province $73F4 stride25, ruler $71D4 stride34. Only WORD fields annotate; officer byte-STATS
+# stay raw (intel@4 war@5 charm@6 loyalty@8, manual-named). The WORD offsets are record-structural /
+# province-econ and safe across the officer|province arg overlap: +2 list-next ptr (officer link / province
+# officer-list head) +4 lead general/governor ptr +8 gold(prov, <=30000) +10 rice(prov, <=30000 scaled)
+# +12 troops/soldiers(officer, <=10000). (NA1-default mislabeled these: +12 "loyalty"->troops, +2 "debt"->list
+# ptr, +8 "output"->gold, +10 "dams"->rice, +4 "town"->general. See RECORD_SCHEMAS.md.)
+[rot3k2.fields]
+province_var = ""
+province = { 2 = "list_next", 4 = "general", 8 = "gold", 10 = "rice", 12 = "troops" }
+arg = "province"
+
+# BK (code-walk 2026-07-01). Records: PREFECTURE $733A stride24 (49; ext bank27 $97EC) and CHARACTER $6005
+# stride18 (255; ext bank27 $8004). The word fields are the intrusive singly-linked list-links shared across
+# records: +2/+4 next-ptrs (a prefecture's +0/+2/+4 are officer-list heads split by status flags +17; see
+# rebuild_officer_lists $D7EB), +22 a record ptr (subordinate/owner). Game-stat fields are BYTES (char stats at
+# bank27 $8004 +20/+21/+22 = Strength/Wisdom/Dex? -- see docs/schema.md) and stay raw. The NA1 default was
+# WRONG here (+2 "debt"/+4 "town"/+22 "arms" econ fields). +0 left raw (overlaps econ "gold" elsewhere).
+# Prefecture econ WORD fields un-genericized by the town-command walk (bank 5): buy/sell caps prove
+# +6=Gold/+8=Food (cap 0x270F=9999, manual Max) and +12=Metal (cap 0x03E7=999, manual Max).
+[bk.fields]
+province_var = ""
+province = { 2 = "next2", 4 = "next4", 6 = "gold", 8 = "food", 12 = "metal", 22 = "subordinate" }
+arg = "province"
+
+# BK's extended-record tables in bank 27, read via memcpy_banked through window 1 = $8000 (romdata records;
+# bk dump_records): the record-schema ground truth (it caught the prefecture <-> character array swap).
+[bk.records.char]                # CHARACTERS: name + stats (+20/+21/+22)
+bank = 27
+addr = 0x8004
+window = 0x8000
+stride = 24
+count = 255
+layout = "lead_name"
+
+[bk.records.pref]                # PREFECTURES: name + castles (+11) + adjacency (+18)
+bank = 27
+addr = 0x97EC
+window = 0x8000
+stride = 27
+count = 49
+layout = "lead_name"
+
+# GEMFIRE (manual + CODE-CONFIRMED by the bank-4 command walk 2026-07-02; GemFire-decompiler/docs/
+# 02-record-schema.md). PROVINCE rec632D stride36 (30). The command-EFFECT caps are ground truth: the WORD
+# fields +2/+4/+6 are the RESOURCES capped 0x3E7=999 (cmd_recruit $8A2F spends +2 x2 -> adds +6 =
+# Gold->Soldiers; cmd_trade $8B80 swaps +2<->+4 = Gold<->Food), and the BYTE fields +8/+9/+10 are the % stats
+# capped 100 (develop cmds $8AE2/$8B31/$8BC8 raise them) => +2=Gold, +4=Food, +6=Soldiers (words);
+# +8/+9/+10=Loyalty/Farming/Protection (bytes, raw); +14=owner (garrison rec6035 slot). LEADER rec60AD stride10:
+# byte +2/+3/+4=Leadership/Command/Charm (raw).
+[gemfire.fields]
+province_var = ""
+province = { 2 = "gold", 4 = "food", 6 = "soldiers", 14 = "owner" }
+arg = "province"
+
+# L'EMPEREUR (data-walk 2026-07-02; bank-3 command walk 2026-07-04; bank-4 army walk). Records: GENERAL $6005
+# stride15, COUNTRY $7068 stride18, CITY $7176 stride28 (names in bank 250). CITY word resources, verified by
+# command-effect caps + national-reserve correspondence: Transport/Distribute/Give/Deposit move +14 <-> $7070
+# (Gold), +16 <-> $7072 (Food), +18 <-> $7074 (Materials), each capped $270F=9999; +20 = Soldiers (cap $270F);
+# Recruit spends +16 food(5/sol) -> +20; Horse spends +14 gold(5/horse) -> +22 horses (cap $03E7=999); Arrange
+# caps confirm +24 = guns (cap 999). These offsets only fit the CITY record (stride 28). City byte %-stats
+# +11/+12/+13 (develop, cap 100) + supply +26 stay raw. LEmp-decompiler/docs/01-data-tables.md.
+[lemp.fields]
+province_var = ""
+province = { 14 = "gold", 16 = "food", 18 = "materials", 20 = "soldiers", 22 = "horses", 24 = "guns" }
+arg = "province"
+
+# UW: records are per-subsystem (ship-stats $6C90/7, ship-cargo $6AA4/24, port-econ $67B2/14, char $6662/16)
+# and the SAME arg is reused across types, so no single global field map is correct: raw offsets rather than
+# na1's misleading rice/debt/town. Field schemas per record in UW-decompile/docs (field_census.py is the tool).
+[uw.fields]
+province_var = ""
+province = {}
+arg = {}
