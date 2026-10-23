@@ -51,7 +51,7 @@ def module_graph(W, name):
     return G, external, indirect
 
 
-def title_graph(rom, P, modules):
+def title_graph(rom, P, modules, strict=False):
     """Every listed module's walk in one Graph: a call into a resident / coresident module lands on
     that module's routine node, so `bank_order` orders MODULES leaves-first (the SNES overlay
     analogue of the NES bank order). Modules that are not bytecode are skipped, with the reason."""
@@ -64,6 +64,9 @@ def title_graph(rom, P, modules):
             skipped[m] = str(e)
             continue
         Wm = VW.walk_module(isa, VW.Space(rom, P, mod))
+        if strict and (Wm.conflicts or Wm.dead_hits or Wm.decode_errors):
+            raise SystemExit("walk of %s is not clean (%d conflicts, %d dead, %d errors) -- fix the tools first"
+                             % (mod.name, len(Wm.conflicts), len(Wm.dead_hits), len(Wm.decode_errors)))
         Gm, _ext, _ind = module_graph(Wm, mod.name)
         G.subs.update(Gm.subs)
         for (s, d), ks in Gm.edges.items():

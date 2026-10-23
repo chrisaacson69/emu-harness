@@ -493,6 +493,55 @@ window model, the exact-entry rule and the co-resident lists settle most calls; 
 settle is reported as ambiguous with its candidate banks. Those reports, the orphans, and the
 descent's `gaps()` are the inputs for row R (static RE of native games).
 
+## Row J done: the walks' deterministic half (2026-10-23)
+
+**Two implementations of one loop.** NA1 has `label-walk-prep` / `label-walk-apply`,
+`var-walk-prep` / `var-walk-apply` and `walk_guard`; AeroBiz has `walk_prep` / `walk_apply` /
+`walk_harvest`. Each loop runs **prep** (the next leaves-first batch) → agents → **apply** (write,
+regen, guard, commit). Only two things are genuinely per-host: the registry format
+(`mesen-labels.toml` sections vs `data/<MODULE>/routines.toml`) and the regen command. Those stay
+in the title drivers.
+
+**Now `emu_harness/walk/`** is a new layer, with the contract "Walks know no emulator" shown to
+fail on a planted violation.
+- **`walk/guard.py`:** the pure-rename regen guard, in two modes.
+  - *Identifier collapse* is NA1's `walk_guard`, verbatim: any logic change fails it, and so does
+    a name leaking into another bank's file.
+  - *Name mapping* is AeroBiz's: names map back to `sub_<ADDR>` and the texts must be equal. It is
+    stricter, because a rename to the *wrong routine's* name passes identifier collapse and fails
+    this (tested).
+- **`walk/prep.py`:** `frontier` (unnamed routines whose callees are all named; a cycle-break when
+  none qualify), `levels` (`passes.callgraph.layers` over the unnamed sub-graph, recursive groups
+  reported) and `make_clusters` (per-module chunks, remainders pooled). From AeroBiz `walk_prep`.
+
+**Moved, with oracles. The oracle replays a real past wave** (the batch rebuilt from its commit's
+registry diff, applied in a scratch worktree on the parent commit):
+- **AeroBiz `walk_prep`:** its own call graph is `vm_callgraph.title_graph` (row H2; a new
+  `strict` mode keeps its clean-walk check), and frontier, levels and clusters come from
+  `walk.prep`. All 5 modes are byte-identical (`--json`, `--levels`, `--levels --args`, `--args`,
+  `--modules`).
+- **AeroBiz `walk_apply`:** its guard is `walk.guard.name_map_violations`. Replaying wave `774e042`
+  (72 routines), both the old and the new tool reproduce the commit's `data/` and `src/` exactly.
+- **NA1 `walk_guard`** is an alias of `walk.guard`; its applies import it unchanged.
+- **NA1 `label-walk-apply` / `var-walk-apply` could not finish a batch.** Their regen ran
+  `tools/decompile-all.py`, deleted when the engine graduated (row F). They now run
+  `tools/na1_regen.py`: source/README's engine recipe for every bytecode bank, so cross-bank bleed
+  is still caught, one process per step because the decompiler keeps its structuring switches in
+  module globals. Replaying batch `2ad12a5` (bank 2, 21 names) with `--no-regen`, the registry
+  write equals the commit's.
+  - The full replay cannot pass the guard, and should not: the engine has improved since, so
+    regenerating the old tree gives non-rename changes.
+- The label-walk / var-walk skills invoke NA1's tools with `py -3.14` (their graph imports need
+  it).
+
+**Stays per title:** AeroBiz `walk_harvest` (observations and code findings into `docs/walk/`) and
+the registry writers.
+
+**Not yet:** one apply driver for every title. The skills claim to be target-agnostic, but the
+write + regen step needs each title's source layout (`source/4-c/bank_NN.c`, `source/c/bankN.c`,
+`src/<MODULE>.c` …). That is profile data no title declares yet; it belongs with the source-ladder
+revisit.
+
 ## Row D done: one native-floor tool (2026-10-22)
 
 **Shape.** The 7 copies were not one algorithm with per-title constants: they were 7 stages of
@@ -1146,6 +1195,7 @@ finished toolset, not just the items below.
 | ro3k-decompiler | Committed `2-asm-vm` / `4-c` came from the old `vm_disasm_rotk` / `vm_decompile_rotk`: banner names the NA1 ROM, the C uses NA1's ext-op addresses and province field names and unnamed syscalls. A regeneration with the driver (the wrappers now run it) fixes them. | row F3 |
 | na1-decompiler | `nobunaga/vm-opcodes.toml` is a legacy opcode table (the old spec's lengths) still read by `analyze-vm-opcodes` / `gen-opcode-appendix`; point them at the shared table and retire it. | row F3 |
 | na1-decompiler | 148 fixed-region (`$C000`+) names are filed under `[prg.bank0]` (e.g. `rng_mod` `$CA52`, `min_word`, `draw_message`, `cursor_nav_loop`, `nmi_off`), so bank 15's own scoped view (its listing, its C, the family report) cannot see them. Move them to `[prg.bank15]`. | row E `family` FILLs |
+| na1-decompiler | Before the next walk batch: regenerate `source/` (`py -3.14 tools/na1_regen.py`), since the committed C predates the engine's enum names / banner / F2 fixes (18 files change), and every batch's guard would otherwise refuse the non-rename diff. `source/4-c/all_banks.c` (the merged PRG-keyed view) has no generator since `decompile-merged.py` went; regenerate it from the shared engine, or retire it. | row J |
 | rot3k2-snes-decompiler, Gemfire-snes-decompiler | Regenerate `src/` (`gen_layers`): with the co-residency now declared, overlay calls into `comroot` / `hex` / `command` are named and `comroot` `$BBF6` is native code; the committed files predate both. | row H2 |
 | UW-decompile | `docs/10-call-graph.md` "strict layering / ZERO subsystem→subsystem edges" counted direct `CALL_abs` only; through `call_in_bank_dcd1` 34 subsystem → subsystem edges exist (`callgraph uw --indegree`). Correct the chapter. | row H |
 | bk, GemFire, LEmp, ... (all KOEI NES titles) | **The source ladder.** NA1 has every layer: 6502 listing, labeled 6502, bytecode listing, raw bytecode C, DREAM C, and each makes inference easier (Chris, 2026-10-23). Later titles may have lost some. Check each title has every layer, regenerated by the shared tools. | row H (Chris) |
