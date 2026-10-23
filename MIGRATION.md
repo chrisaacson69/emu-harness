@@ -396,10 +396,49 @@ text:
 
 **Stays in its title:** NA1 `driver-call-index`, a per-driver formula-decode aid over bank 1.
 
-**H2 (next):** move koei-snes `vm_callgraph` (already in emu-harness), snes-decompiler
-`native_callgraph` and Mappy `call_graph` onto `passes/callgraph`. Each keeps its own edge
-extraction (host-specific), but their three orderings (leaves / frontier, Tarjan SCC, DFS
-post-order) become the shared one, each proved against its old report.
+## Row H2 done: SNES and Mappy on the one graph; row H closed (2026-10-23)
+
+Chris: SNES swaps memory pages differently, but the job is the same. A module is loaded into WRAM
+as an overlay where an NES bank is mapped into a window, so the node is `(module, addr)`. The
+resident modules play the fixed banks, and the parent an overlay runs beside plays a co-resident
+bank.
+
+- **The ordering is Mappy's.** Its Tarjan SCC order is the better leaves-first: reverse
+  topological, with a recursive cluster kept together rather than cut at an arbitrary member.
+  - It is now `passes.callgraph.sccs`, made iterative with the recursive version's exact visiting
+    order (a test checks it against the recursive original on 200 random graphs).
+  - `leaves_first` and `bank_order` are that order. They replace the H1 heuristic, which was
+    used only by the not-yet-committed views.
+  - snes-decompiler's subtree worklist is `passes.callgraph.postorder`. Mappy's walk and the
+    native post-order are the reuse here, not the H1 code.
+- **koei-snes `vm_callgraph`** builds a `passes.callgraph.Graph` per module (`module_graph`, from
+  `vm_walk`'s classified calls). Its forest roots and naming frontier are the shared `tops()` /
+  `frontier()`; `frontier` is the walk's "name these next", now available for NES too. All 384
+  outputs (3 titles, every module, 6 modes) are identical.
+- **New: `vm_callgraph --title <repo>`.** It builds one graph over every module and orders the
+  *modules* leaves-first:
+  - rot3k2: `root → comroot / hex / … → their overlays → the nested hsovl51-53`;
+  - GemFire: `root → command → its command overlays`;
+  - AeroBiz: `COMMON → ALNMAIN / COMMAND → the apps`.
+- **Co-residency for rot3k2 and GemFire, measured** (`[rot3k2.coresident]`,
+  `[gemfire.coresident]`). Their overlays' calls into the parent left in WRAM were "unmapped"
+  (rot3k2 855 calls). The exact-entry census assigned them: `csovl1-7` / `excsub1-6 → comroot`,
+  `hsovl1-6 → hex`, `hsovl51-53 → hex + hsovl5`, GemFire `comcmp` / `comusr1-2 → command`.
+  - Effect on the SNES run, 80 of 439 outputs changed, all one of four kinds:
+    - calls into the parent named in the C (`sub_5767(...)` → `list_castle_officers_b(...)`) and
+      in the listings (`; list_units_paged`);
+    - call-class counts;
+    - symbols-visible counts;
+    - one native stub recovered: rot3k2 `comroot` `$BBF6` (`PHP; REP #$30; JSR $BC20 …`), which
+      only the overlays call, was listed as `db` bytes.
+- **Mappy `call_graph`:** its Tarjan is the shared one now, and its path-hacked koei-nes import is
+  `emu_harness.cpu.m6502.disasm`. Stdout is identical, and the committed `callgraph.dot` /
+  `bottom_up_order.txt` regenerate unchanged.
+- **snes-decompiler `native_callgraph`:** `dfs_postorder` delegates. All 3 modes on NA1-SNES are
+  identical, and the post-order from every one of its 727 routines equals the old one.
+
+**Row H is complete:** one graph and one ordering, with a builder per host (KOEI NES, KOEI SNES,
+native 65816, native 6502 / Mappy).
 
 ## Row D done: one native-floor tool (2026-10-22)
 
@@ -1054,6 +1093,7 @@ finished toolset, not just the items below.
 | ro3k-decompiler | Committed `2-asm-vm` / `4-c` came from the old `vm_disasm_rotk` / `vm_decompile_rotk`: banner names the NA1 ROM, the C uses NA1's ext-op addresses and province field names and unnamed syscalls. A regeneration with the driver (the wrappers now run it) fixes them. | row F3 |
 | na1-decompiler | `nobunaga/vm-opcodes.toml` is a legacy opcode table (the old spec's lengths) still read by `analyze-vm-opcodes` / `gen-opcode-appendix`; point them at the shared table and retire it. | row F3 |
 | na1-decompiler | 148 fixed-region (`$C000`+) names are filed under `[prg.bank0]` (e.g. `rng_mod` `$CA52`, `min_word`, `draw_message`, `cursor_nav_loop`, `nmi_off`), so bank 15's own scoped view (its listing, its C, the family report) cannot see them. Move them to `[prg.bank15]`. | row E `family` FILLs |
+| rot3k2-snes-decompiler, Gemfire-snes-decompiler | Regenerate `src/` (`gen_layers`): with the co-residency now declared, overlay calls into `comroot` / `hex` / `command` are named and `comroot` `$BBF6` is native code; the committed files predate both. | row H2 |
 | UW-decompile | `docs/10-call-graph.md` "strict layering / ZERO subsystem→subsystem edges" counted direct `CALL_abs` only; through `call_in_bank_dcd1` 34 subsystem → subsystem edges exist (`callgraph uw --indegree`). Correct the chapter. | row H |
 | bk, GemFire, LEmp, ... (all KOEI NES titles) | **The source ladder.** NA1 has every layer: 6502 listing, labeled 6502, bytecode listing, raw bytecode C, DREAM C, and each makes inference easier (Chris, 2026-10-23). Later titles may have lost some. Check each title has every layer, regenerated by the shared tools. | row H (Chris) |
 | na1-decompiler | `fill_bytes` `$CA97`, `memchr` `$CAF0` and 5 more bank-15 routines have no caller and no root (`callgraph na1 --orphans --bank 15`; the old index agrees): linked, never called with a constant address. Confirm dead, or find the computed call. | row H |

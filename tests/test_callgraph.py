@@ -40,3 +40,40 @@ def test_uw_trampoline_edges_cross_subsystems():
     graph counted direct CALL_abs only, and so reported strict layering."""
     G = _built("uw")
     assert "bankcall" in G.edges[((18, 0x83BB), (29, 0x872B))]
+
+
+def _tarjan_recursive(nodes, succ):
+    """Mappy's original recursive Tarjan (game-annotation mappy/call_graph.py), the reference."""
+    import sys
+    sys.setrecursionlimit(10000)
+    index, low, onst, stack, out, ctr = {}, {}, {}, [], [], [0]
+
+    def strongconnect(v):
+        index[v] = low[v] = ctr[0]; ctr[0] += 1; stack.append(v); onst[v] = True
+        for w in succ(v):
+            if w not in index:
+                strongconnect(w); low[v] = min(low[v], low[w])
+            elif onst.get(w):
+                low[v] = min(low[v], index[w])
+        if low[v] == index[v]:
+            comp = []
+            while True:
+                w = stack.pop(); onst[w] = False; comp.append(w)
+                if w == v:
+                    break
+            out.append(comp)
+    for v in nodes:
+        if v not in index:
+            strongconnect(v)
+    return out
+
+
+def test_iterative_tarjan_matches_the_recursive_order():
+    import random
+    from emu_harness.passes.callgraph import sccs
+    rng = random.Random(7)
+    for trial in range(200):
+        n = rng.randint(1, 40)
+        adj = {v: [rng.randrange(n) for _ in range(rng.randint(0, 4))] for v in range(n)}
+        nodes = list(range(n)); rng.shuffle(nodes)
+        assert sccs(nodes, lambda v: adj[v]) == _tarjan_recursive(nodes, lambda v: adj[v]), trial

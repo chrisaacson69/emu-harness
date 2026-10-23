@@ -57,6 +57,36 @@ fetch_helpers = { 0xA089 = 1, 0xA09B = 1, 0xA0BC = 2, 0xA0C4 = 2, 0xA0CE = 2 }
 routine_sig         = [0x20, 0xE6, 0x23]   # JSR $23E6 (the rot3k2 module-launcher trampoline)
 routine_body_offset = 5
 
+[rot3k2.coresident]
+# Overlays and the parent that stays in WRAM while they run (emu-harness MIGRATION.md row H2). Census:
+# every call an overlay made outside itself + the resident pair, matched to the one module with a
+# routine exactly at the target (exact-entry): csovl1-7 -> comroot (52/67, 78/78, 80/80, 95/95,
+# 104/104, 35/36, 69/70), excsub1-6 -> comroot (17/17 .. 30/30), hsovl1-6 -> hex (69/79, 72/92,
+# 33/41, 56/80, 32/32, 40/49). hsovl51-53 load at $D800, above hsovl5 ($CC00-$D7EC), and also call
+# it (51: 2, 52: 7). The rest of each overlay's targets match no routine anywhere (stay unmapped).
+csovl1  = ["comroot"]
+csovl2  = ["comroot"]
+csovl3  = ["comroot"]
+csovl4  = ["comroot"]
+csovl5  = ["comroot"]
+csovl6  = ["comroot"]
+csovl7  = ["comroot"]
+excsub1 = ["comroot"]
+excsub2 = ["comroot"]
+excsub3 = ["comroot"]
+excsub4 = ["comroot"]
+excsub5 = ["comroot"]
+excsub6 = ["comroot"]
+hsovl1  = ["hex"]
+hsovl2  = ["hex"]
+hsovl3  = ["hex"]
+hsovl4  = ["hex"]
+hsovl5  = ["hex"]
+hsovl6  = ["hex"]
+hsovl51 = ["hex", "hsovl5"]
+hsovl52 = ["hex", "hsovl5"]
+hsovl53 = ["hex", "hsovl5"]
+
 [gemfire]
 # 2nd KOEI SNES title. Every constant below was derived FRESH from the Gemfire ROM
 # (never copied from rot3k2/NES-Gemfire); prior projects are held as post-hoc oracles.
@@ -98,6 +128,14 @@ fetch_helpers = { 0xA939 = 1, 0xA94B = 1, 0xA96C = 2, 0xA974 = 2, 0xA97E = 2 }
 # (rot3k2 default = sig [0x20,0xE6], offset 0.) See docs/00-recon.md.
 routine_sig         = [0x20, 0x87, 0x32]   # JSR $3287 (the $3287 module-launcher trampoline)
 routine_body_offset = 5                    # JSR(3) + 2-byte inline param -> body
+
+[gemfire.coresident]
+# The $6400-slot command overlays and `command`, which stays in WRAM (MIGRATION.md row H2): every
+# call they made outside themselves + the resident pair lands on a `command` routine (exact-entry:
+# comcmp 22/22, comusr1 26/26, comusr2 23/23).
+comcmp  = ["command"]
+comusr1 = ["command"]
+comusr2 = ["command"]
 
 [aerobiz]
 # 3rd KOEI SNES title: Aerobiz (USA) -- the ORIGINAL (JP Air Management: Oozora ni Kakeru, SFC 1992-04;

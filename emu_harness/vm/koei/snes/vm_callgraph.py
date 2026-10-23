@@ -29,6 +29,47 @@ from emu_harness.machines.snes.mapper import strip_copier_header  # noqa: E402
 from emu_harness.vm.koei.snes import profile as _profile  # noqa: E402
 from emu_harness.vm.koei.snes import vm_isa as ISA  # noqa: E402
 from emu_harness.vm.koei.snes import vm_walk as VW  # noqa: E402
+from emu_harness.passes.callgraph import Graph  # noqa: E402
+
+
+def module_graph(W, name):
+    """One module's walk as a passes.callgraph Graph. Nodes are (module, addr): this module's
+    routines, plus each external target at the module vm_walk owned it to (resident / coresident)
+    or its class (syscall / native / unmapped); edge kind = vm_walk's class.
+    -> (Graph, Counter of external (target, class, module), Counter of indirect calls per routine)"""
+    G = Graph(name)
+    for e in W.routines:
+        G.subs[(name, e)] = None
+    external, indirect = Counter(), Counter()
+    for site, e, cls, mname, t, op in W.calls:
+        if cls == "indirect":
+            indirect[e] += 1
+            continue
+        if not (cls == "intra" and (name, t) in G.subs):
+            external[(t, cls, mname)] += 1             # kept as an edge (a non-node callee)
+        G.add((name, e), (mname or cls, t), cls)
+    return G, external, indirect
+
+
+def title_graph(rom, P, modules):
+    """Every listed module's walk in one Graph: a call into a resident / coresident module lands on
+    that module's routine node, so `bank_order` orders MODULES leaves-first (the SNES overlay
+    analogue of the NES bank order). Modules that are not bytecode are skipped, with the reason."""
+    isa = ISA.bind(rom, P)
+    G, skipped = Graph("snes"), {}
+    for m in modules:
+        try:
+            mod = VW.module_from_args(rom, P, argparse.Namespace(module=m, start=None, base=None))
+        except KeyError as e:
+            skipped[m] = str(e)
+            continue
+        Wm = VW.walk_module(isa, VW.Space(rom, P, mod))
+        Gm, _ext, _ind = module_graph(Wm, mod.name)
+        G.subs.update(Gm.subs)
+        for (s, d), ks in Gm.edges.items():
+            for k in ks:
+                G.add(s, d, k)
+    return G, skipped
 
 
 def main(argv):
@@ -45,7 +86,26 @@ def main(argv):
     ap.add_argument("--unnamed", action="store_true", help="report named/unnamed + naming frontier")
     ap.add_argument("--dump-frontier", dest="dump_frontier", action="store_true", help="dump frontier routine bodies")
     ap.add_argument("--tree", action="store_true", help="print top-down call forest (for the walk-down)")
+    ap.add_argument("--title", default=None,
+                    help="title repo: every data/<module>/ as ONE graph -> cross-module edges + modules leaves-first")
     a = ap.parse_args(argv[1:])
+    if a.title:
+        from emu_harness.passes.callgraph import bank_order
+        rom, _ = strip_copier_header(open(a.rom, "rb").read())
+        P = _profile.select(a.game, rom)
+        mods = sorted(d for d in os.listdir(os.path.join(a.title, "data"))
+                      if os.path.isfile(os.path.join(a.title, "data", d, "routines.toml")))
+        G, skipped = title_graph(rom, P, mods)
+        known = {m for m, _a in G.subs}
+        print("== title call graph: %d modules, %d routines, %d edges ==" % (len(known), len(G.subs), len(G.edges)))
+        for m, why in sorted(skipped.items()):
+            print("  skipped %s: %s" % (m, why))
+        print("\ncross-module edges (caller -> callee module: kinds)")
+        for (s, d), ks in sorted(G.bank_edges.items(), key=lambda kv: (str(kv[0][0]), str(kv[0][1]))):
+            if d in known:
+                print("  %-10s -> %-10s %s" % (s, d, ",".join(sorted(ks))))
+        print("\nmodules, leaves first: " + " -> ".join(bank_order(G)))
+        return 0
     if not (a.module or a.start):
         ap.error("give --module NAME (or the legacy --start/--base)")
     rom, _ = strip_copier_header(open(a.rom, "rb").read())
@@ -60,17 +120,8 @@ def main(argv):
     routines = {e: W.walks[e] for e in W.routines}
     rset = set(routines)
 
-    calls, external, indirect = {}, Counter(), Counter()
-    for site, e, cls, mname, t, op in W.calls:
-        if cls == "indirect":
-            indirect[e] += 1
-        elif cls == "intra" and t in rset:
-            calls.setdefault(e, set()).add(t)
-        else:
-            external[(t, cls, mname)] += 1
-            calls.setdefault(e, set()).add(t)          # kept as an edge (a non-node callee)
-    for e in routines:
-        calls.setdefault(e, set())
+    G, external, indirect = module_graph(W, mod.name)
+    calls = {e: {d[1] for d, _ks in G.callees((mod.name, e))} for e in routines}
 
     def is_node(t):
         return t in rset
@@ -105,10 +156,7 @@ def main(argv):
         from emu_harness.vm.koei.snes.symbols import Symbols
         S = Symbols(a.syms, profile=P)
     if a.tree:
-        called = set()
-        for cs in calls.values():
-            called |= {c for c in cs if is_node(c)}
-        tops = sorted(e for e in routines if e not in called)
+        tops = [n[1] for n in G.tops()]
         nm = lambda e: S.string(e) or "$%04X" % e
         seen = set()
 
@@ -132,9 +180,7 @@ def main(argv):
         # naming frontier: unnamed routines whose every callee THAT IS A ROUTINE is named.
         # A callee that is not a routine of this module (native stub, resident/coresident
         # library, unmapped) must not block the frontier -- only real routines here do.
-        def callee_ok(c):
-            return (not is_node(c)) or bool(S.string(c))
-        frontier = [e for e in unn if all(callee_ok(c) for c in calls[e])]
+        frontier = [n[1] for n in G.frontier(lambda n: bool(S.string(n[1])))]
         if a.dump_frontier:
             print("== frontier bodies (%d; >name = call to named routine) ==" % len(frontier))
             for e in sorted(frontier):
