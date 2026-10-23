@@ -106,3 +106,16 @@ def test_dream_switch_merging_into_its_loop_header():
     # Built, and equivalent by the gate; only the duplication cap keeps it out of the C. Before
     # the fix: a TypeError in emission (or, with just the sink guard, 'out of scope').
     assert how in ("dream", "goto: DREAM over-dup")
+
+
+def test_match_tokens_come_from_bytes_not_names():
+    """vm/koei/match: ROM operands and control targets relocate ('A'); RAM operands, immediates and
+    frame offsets stay; switch tables keep their case values; ext ops carry their ext byte."""
+    from emu_harness.vm.koei.match import token
+    assert token([0x0C]) == "0C"                                   # nibble op: operand in the opcode
+    assert token([0xD6, 0x17, 0x80]) == token([0xD6, 0x34, 0x92]) == "D6 A"   # a jump, anywhere
+    assert token([0xA4, 0x01, 0x71]) == "A4 $7101"                 # a RAM global stays
+    assert token([0xA4, 0x00, 0x91]) == "A4 A"                     # a ROM table relocates
+    sw = [0xD9, 2, 0, 5, 0, 0x10, 0x80, 9, 0, 0x20, 0x80, 0x30, 0x80]   # n=2: (5 ->), (9 ->), default
+    assert token(sw) == "D9 2 5 A 9 A A"
+    assert token([0xB7, 0x18, 1, 2, 3, 4]).startswith("B7.18 ")

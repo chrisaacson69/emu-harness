@@ -847,6 +847,59 @@ the core algorithm it becomes conventions and special cases. Chasing every goto 
   `passes/structure` move, `native_decompile`, the NES decompiler's 32-bit ext ops and shift
   clobber, and the 3 red `cfg_gate` NA1 subs.
 
+## Row E, KOEI half: cross-title matching (2026-10-23)
+
+**One matcher over decoded bytes.** `vm/koei/match.py` signs a bytecode routine from its decoded
+bytes through the one opcode table:
+- **Kept:** the opcode (plus the ext byte), immediates, frame offsets, and RAM operands.
+- **Normalized to 'A':** ROM operands and every control target.
+
+`vm/koei/nes/match.py` enumerates every sub of every code bank of every NES title through
+`titles.bank_view`, with names from each bank's scoped labels.
+
+**Why decoded, not text.** `bc_match` tokenized listing text, and the committed listings name the
+same byte differently: ro3k's `PUSH_quick` / `LOADL_quick` vs NA1's `PUSH_qimm`. So ro3k vs NA1
+banks 0–2 scored 0 shared, while bank 15, whose listing happens to use the current names, scored 17.
+
+**What the measurement says about the library.** Bytecode twins across titles are few, even
+opcode-only:
+- About 10–25 between close relatives (na1/ro3k/gk, gk/bk/GemFire).
+- Almost none for LEmp, even against NA2, whose engine it uses.
+- Normalizing RAM globals changes nothing.
+
+So the game bytecode was rewritten per title. The shared library is a small bytecode core
+(`fill_bytes`, `strcpy`, `strcmp`, `char_to_upper`, `muldiv`, percent / clamp math, digit
+formatting) plus the native layer: 337 native twin clusters vs 44 bytecode. That matches koei-nes
+`docs/shared-library.md`.
+
+**`match family [--layer bytecode|native]`: twin clusters and their names.**
+- Each sub is joined to its best match (≥ .90, ≥ 8 tokens) in every other title.
+- Each cluster's canonical name is the earliest title's, because games.toml is in release order.
+  That is `shared-library.md`'s rule: NA1 is the established vocabulary.
+- Every member named otherwise is listed:
+  - **RENAME:** identical code.
+  - **READ:** a near twin ("shared-but-evolved: cross-ref, don't blind-rename").
+  - **FILL:** unnamed here.
+- Proposals only; applying them belongs to the title revisits.
+- The drift it finds is the drift Chris saw: GemFire `memset` / `to_upper` / `mul_div` vs NA1/ro3k
+  `fill_bytes` / `char_to_upper` / gk `muldiv32_signed`, and ro3k `strcpy_bytes` vs NA1 `strcpy`.
+- **The earliest-title rule is only a default.** Identical code can carry a caller's purpose as
+  its name: gk `win_probability_percent` and rot3k2 `calc_loyalty_gain` for what bk / GemFire call
+  `ratio_percent`. And some pairs need a read to know which side is right. Choosing the canonical
+  name is inference (open question below).
+
+**Folded (each against its old output on the same inputs):**
+
+| old | now | oracle |
+|---|---|---|
+| ro3k + gk `bc_match.py` (verbatim copies) | `match pair`; both are thin CLIs | 10 bank pairs identical. Named: the header column takes the game's name (it said "ROTK" for gk too); a bank with no match no longer crashes on `None` (banks 10, rc=1 before) |
+| GemFire `multi_oracle.py` (6 hardcoded ROM/label/stub triples) | `match oracles <title> --oracles …`, each from its profile; thin CLI | all 3 modes identical. Named: the oracle tag is the profile name (`rot3k2`, was `rotk2`) |
+| koei-nes `tools/native_floor.py` | `vm/koei/nes/native_floor.py`; koei-nes keeps an alias | 7 titles × 3 modes identical. Named: the `--toml` banner names its new home |
+| ro3k `handler_match` imported by path hack (UW `gen_labels`, `native_banks`; rot3k2 `native_bytecode_called`) | `native_floor.handler_helpers()` (the three emu-harness functions) | every mode of all three identical, `gen_labels`' generated registry included |
+
+ro3k's `handler_match` and `native_match` stay as ro3k's own tools (ro3k vs NA1), and nothing
+outside ro3k imports them any more.
+
 ## Per-project revisits (after the toolset is complete; one session each)
 
 Chris, 2026-10-23: "focus on the task of creating the toolset ... have each revisit in its own
@@ -879,6 +932,11 @@ finished toolset, not just the items below.
 | UW-decompile | Other banks' committed listings tag calls into the fixed `$C000` bank `{native}`/`{bytecode}` from the wrong bytes (the 16K-bank-15 fixed-region bug in the generic driver). The committed bank 62/63 listings and C read the right bytes: UW made them with its own `disasm_fixed_bytecode` workaround. (Corrected 2026-10-23: an earlier version of this row said they decode banks 30/31.) That workaround's address rewrite also changed 5 immediate operands in `bank62_C000_library.asm` (`$A418` printed as `$C418`); a regeneration with the driver fixes them. | rows F2/F3 |
 | ro3k-decompiler | Committed `2-asm-vm` / `4-c` came from the old `vm_disasm_rotk` / `vm_decompile_rotk`: banner names the NA1 ROM, the C uses NA1's ext-op addresses and province field names and unnamed syscalls. A regeneration with the driver (the wrappers now run it) fixes them. | row F3 |
 | na1-decompiler | `nobunaga/vm-opcodes.toml` is a legacy opcode table (the old spec's lengths) still read by `analyze-vm-opcodes` / `gen-opcode-appendix`; point them at the shared table and retire it. | row F3 |
+| na1-decompiler | 148 fixed-region (`$C000`+) names are filed under `[prg.bank0]` (e.g. `rng_mod` `$CA52`, `min_word`, `draw_message`, `cursor_nav_loop`, `nmi_off`), so bank 15's own scoped view (its listing, its C, the family report) cannot see them. Move them to `[prg.bank15]`. | row E `family` FILLs |
+| UW-decompile | `gen_labels.py` no longer reproduces `mesen-labels.toml` (it writes 1,090 lines; the committed file has 1,468, grown by the walks). Running it overwrites walked names: retire it, or make it merge. | row E oracle |
+| UW-decompile | Names that contradict their byte-identical twins: `loop_init_c4dc` `$C4DC` = GemFire `parse_uint`; `incr_deref_field` `$C4FE` = ro3k `emit_decimal_digits_recursive` / GemFire `itoa_append`. | row E `family` |
+| rot3k2-decompiler | `native_bytecode_called.py` now finds 0 fixed-region `sub_XXXX` calls in the C (its input looks stale or fully named); check whether it is still needed. | row E oracle |
+| all KOEI NES titles | Cross-title name drift: `match family` finds 44 bytecode and 337 native twin clusters, with 30 + 76 RENAME, 14 + 26 READ and 4 + 163 FILL proposals. Apply after the canonical vocabulary is settled (open question below). | row E `family` |
 
 ## Open questions (Chris)
 
@@ -894,6 +952,11 @@ finished toolset, not just the items below.
   2026-10-23:** yes. Both read disasm6 listings (na1's `bank_NN.asm`, made with nes-disasm6 per na1
   `tools/EXTERNAL.md`). It is kept as a plugin (`machines/nes/nes_disasm6.py`). Those two readers
   belong to row A3.
+- **The canonical routine vocabulary (row E).** The `family` report finds twins mechanically, but
+  picking a cluster's name is inference. Options: keep the earliest-title default; or run one
+  inference pass over the drifted clusters, bottom-up (leaf services first, as in the label walks),
+  that picks a functional name per cluster. Its result would become a committed vocabulary that the
+  report reads, converted from `shared-library.md`'s table.
 - **na1-snes-decompiler** has no vault pointer (it is now in the path resolver).
 - Do the koei-nes and koei-snes repos get **archived** after step 5, as nes-harness was?
 - UW-decompile: GitHub remote, public or private? (Its siblings GemFire and LEmp are public.)
