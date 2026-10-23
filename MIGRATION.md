@@ -783,6 +783,57 @@ were run on all 9 NES cartridges:
 - The NES decompiler does not yet model the 32-bit ext ops, or NES shifts clobbering regR.
 - `cfg_gate`'s three NA1-fold subs are red (since before graduation).
 
+## Row G1: DREAM on the SNES lifter (2026-10-23)
+
+**One structurer, two lifters.** DREAM (`nes/dream.py`) now takes a ready block graph:
+- `tagged_cfg_graph(lines, cfg, leaders)` and `dream_structure_gated_graph` take any host's graph.
+  The NES entry builds the graph with `vm_cfg.bytecode_cfg` and calls the same code.
+- `snes/vm_dream.py` turns `vm_lift` blocks into DREAM's goto dialect. It checks itself first:
+  lowering the printed lines (`vm_cfg.lower_goto_cfg`, the gate's own lowering) must give back the
+  lifter's graph exactly. A routine that fails the check, or has an unhandled shape, stays in goto
+  form.
+
+**DREAM fixes found by running it on SNES.** NES output is identical after all of them (889/889).
+- **Exponential emission.** `_emits` / `_min_addr` re-emitted both arms of every `if`, so the
+  cost doubled per nesting level, and rot3k2 root `$2A21` never finished. Probes are now cached
+  per emission, and the boolean layer is memoized. `EMIT_CAP` rejects an AST whose tree-walked
+  size is over 200,000 lines before emitting it.
+- **A switch that merges into its own loop's header** (rot3k2 root `$34F4`). The switch region
+  dropped every block the merge dominates. When the merge is the enclosing loop's header, it
+  dominates the switch too, so the region came out empty and the case bodies were orphaned. One
+  orphan reached a latch, so the loop finder took the CONTINUE sink for a header, and emission
+  crashed on its string address. Now post-merge code is excluded only when the merge comes after
+  the switch, and a sink header bails out of scope. The regression test uses the real routine
+  (it skips without the sibling ROM), and it fails if either fix is reverted.
+- `_gated` reports why it rejects (`out of scope` / `emit cap` / `gate reject` / `over-dup`), and
+  an emission error rejects the routine instead of crashing.
+- Pure-statement detection also covers `mem[` / `memb[` / `mem32[` reads.
+
+**Measured** (`vm_dream --stats`). Goto-free routines; "cutover" means DREAM when it passes the
+gate, else `vm_struct`:
+
+| title | routines | DREAM structured | goto-free: DREAM | `vm_struct` | cutover |
+|---|---|---|---|---|---|
+| rot3k2 | 1,358 | 805 (59.3%) | 698 (51.4%) | 611 (45.0%) | **882 (64.9%)** |
+| GemFire | 591 | 335 (56.7%) | 294 (49.7%) | 244 (41.3%) | **362 (61.3%)** |
+| Aerobiz | 479 | 156 (32.6%) | 108 (22.5%) | 82 (17.1%) | **144 (30.1%)** |
+
+DREAM's rejects, by cause:
+
+| title | over-dup | gate reject | out of scope |
+|---|---|---|---|
+| rot3k2 | 376 | 128 | 49 |
+| GemFire | 173 | 49 | 34 |
+| Aerobiz | 267 | 31 | 25 |
+
+- **Over-dup is the main loss.** These routines are structured and proved equivalent, but the
+  NES-tuned `DUP_CAP` prefers the goto form. On the NES, the fallback was V2. On SNES it is
+  `vm_struct`, so the cap's trade-off has to be re-measured for this host.
+- **Gate rejects mean either DREAM built something wrong or the gate is too strict.** Each one is
+  a bug lead for row G.
+- **Not yet cut over:** the SNES `.c` output still comes from `vm_struct`. Switching it changes
+  committed title files, so it is a separate step.
+
 ## Per-project revisits (after the toolset is complete; one session each)
 
 Chris, 2026-10-23: "focus on the task of creating the toolset ... have each revisit in its own

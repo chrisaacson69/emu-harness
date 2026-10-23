@@ -77,3 +77,32 @@ def test_na1_certified_folds_apply_to_na1_only():
     assert VC._EXTOP_OVERRIDE == {}
     VC.set_schema("na1")
     assert 0x8327 in VC._EXTOP_OVERRIDE
+
+
+
+def test_dream_switch_merging_into_its_loop_header():
+    """rot3k2-SNES root $34F4: a switch whose merge is its enclosing loop's header (the merge
+    dominates the switch). Excluding the merge's dominance emptied the switch region, orphaned the
+    case bodies, and a sink became a loop 'header' -- DREAM crashed emitting it (row G). Needs the
+    sibling rot3k2-snes-decompiler checkout and its (gitignored) ROM."""
+    import argparse
+    from pathlib import Path
+    import pytest
+    T = Path(__file__).resolve().parents[2] / "rot3k2-snes-decompiler"
+    sfc = T / "Romance of the Three Kingdoms II (USA).sfc"
+    if not sfc.exists():
+        pytest.skip("rot3k2-snes-decompiler ROM not present")
+    from emu_harness.machines.snes.mapper import strip_copier_header
+    from emu_harness.vm.koei.snes import profile, vm_isa, vm_lift, vm_walk, vm_dream
+    from emu_harness.vm.koei.snes.symbols import Symbols
+    rom, _ = strip_copier_header(sfc.read_bytes())
+    P = profile.select("rot3k2", rom)
+    space = vm_walk.Space(rom, P, vm_walk.module_from_args(
+        rom, P, argparse.Namespace(module="root", start=None, base=None)))
+    isa = vm_isa.bind(rom, P)
+    W = vm_walk.walk_module(isa, space)
+    R = vm_lift.Lifter(isa, space, Symbols(str(T / "data" / "root"), profile=P), W).lift(0x34F4, W.walks[0x34F4])
+    _lines, how = vm_dream.structure(R)
+    # Built, and equivalent by the gate; only the duplication cap keeps it out of the C. Before
+    # the fix: a TypeError in emission (or, with just the sink guard, 'out of scope').
+    assert how in ("dream", "goto: DREAM over-dup")

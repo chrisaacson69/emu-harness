@@ -19,6 +19,7 @@ vm_cfg.py + vm_decompile.py + vm_reduce._parse_block. We replace only structurin
 Usage (PoC dump):
   py -3 tools/dream.py <bank> <sub_addr_hex>      # e.g. tools/dream.py 15 CDCF
 """
+import functools
 import re
 import sys
 from emu_harness.vm.koei.nes import vm_cfg
@@ -54,7 +55,8 @@ def lit(cond_text):
 # condition stays clean. (Bare scalar predicates — `cur_combat_unit_slot`, `(local10 <= 0)`, `arg1`
 # — keep shared identity: uniquifying them would needlessly de-factor clean structure.)
 _DISAMBIG = '\x1f'
-_IMPURE_RE = re.compile(r'[A-Za-z_]\w*\(|\*')        # a call `name(` or a pointer deref `*`
+_IMPURE_RE = re.compile(r'[A-Za-z_]\w*\(|\*|\b(?:mem|memb|mem32)\[')   # a call `name(`, a pointer
+#   deref `*`, or the SNES lifter's memory read `mem[..]` / `memb[..]` / `mem32[..]` (row G)
 
 
 def _branch_lit(rawcond, block_addr):
@@ -65,6 +67,9 @@ def _branch_lit(rawcond, block_addr):
     return e
 
 
+@functools.lru_cache(maxsize=1 << 18)   # pure over immutable formulas: De Morgan inside the
+#   complementation tests (`neg(t) in s`) re-negated the same sub-formulas exponentially often on deep
+#   reaching conditions (SNES rot3k2 root $2A21 / opend $7A86 never finished; MIGRATION.md row G).
 def neg(e):
     k = e[0]
     if k == 'T':
@@ -90,6 +95,7 @@ def _flatten(kind, args):
     return out
 
 
+@functools.lru_cache(maxsize=1 << 18)
 def _and(*args):
     terms = _flatten('and', args)
     s = set()
@@ -110,6 +116,7 @@ def _and(*args):
     return ('and', frozenset(s))
 
 
+@functools.lru_cache(maxsize=1 << 18)
 def _or(*args):
     terms = _flatten('or', args)
     s = set()
@@ -197,8 +204,19 @@ def to_c(e):
 # under which it is taken.
 # --------------------------------------------------------------------------- #
 def tagged_cfg(lines, instructions):
-    from emu_harness.vm.koei.nes import vm_reduce
+    """The tagged CFG of one NES sub: its block graph from the bytecode (vm_cfg.bytecode_cfg)."""
     cfg, leaders = vm_cfg.bytecode_cfg(instructions)
+    return tagged_cfg_graph(lines, cfg, leaders)
+
+
+def tagged_cfg_graph(lines, cfg, leaders):
+    """The tagged CFG from a ready block graph -- the host-neutral entry (MIGRATION.md row G):
+    `cfg` = {leader: frozenset(successor leaders / vm_cfg.EXIT)}, `leaders` sorted, and `lines`
+    the routine's goto form in this module's dialect ((addr, indent, text); `L_XXXX:` labels,
+    `if (c) goto L_XXXX;` falling through to the next leader by address, `goto`, `return`,
+    `switch (x) {` + `case N: goto L_XXXX;` lines). The NES decompiler and the SNES lifter's
+    adapter (snes/vm_dream) both produce it."""
+    from emu_harness.vm.koei.nes import vm_reduce
     block_of = vm_cfg._block_of_fn(leaders)
     buckets = vm_reduce._partition(lines, leaders)
     info = {L: vm_reduce._parse_block(buckets[L]) for L in leaders}
@@ -620,24 +638,49 @@ def refine(tc, items):
     return pre_nodes + [head_emit, node] + refine(tc, cont_i)
 
 
+# _emits / _min_addr answer by emitting a sub-sequence; every `if` asks both of its arms, then
+# emits them for real, so without memoisation the cost doubles per nesting level (rot3k2-SNES root
+# $2A21 never finished; MIGRATION.md row G). A probe depends only on (seq, nxt), and the AST is not
+# mutated during one emission, so probes are cached for exactly one top-level _emit_ast call
+# (cleared on entry; a hit must be the very same seq and nxt objects).
+_PROBES = {}
+_EMIT_DEPTH = [0]
+
+
+def _probe(seq, nxt):
+    hit = _PROBES.get(id(seq))
+    if hit is not None and hit[0] is seq and hit[1] is nxt:
+        return hit[2]
+    probe = []
+    _emit_ast(seq, 0, probe, nxt)
+    _PROBES[id(seq)] = (seq, nxt, probe)
+    return probe
+
+
 def _emits(seq, nxt):
     """Does this AST seq produce any emitted line? (post-emit emptiness, not list-empty —
     a seq can hold a both-empty nested `if` that yields nothing.)"""
-    probe = []
-    _emit_ast(seq, 0, probe, nxt)
-    return bool(probe)
+    return bool(_probe(seq, nxt))
 
 
 def _min_addr(seq, nxt):
     """Lowest real (addr>0) line a seq emits, or None. Used to keep the then-arm = the
     LOWER-address arm so emit stays address-ascending (what the address-anchored gate wants)."""
-    probe = []
-    _emit_ast(seq, 0, probe, nxt)
-    addrs = [a for a, _i, _t in probe if a]
+    addrs = [a for a, _i, _t in _probe(seq, nxt) if a]
     return min(addrs) if addrs else None
 
 
 def _emit_ast(ast, indent, out, nxt):
+    if _EMIT_DEPTH[0] == 0:
+        _PROBES.clear()                               # a fresh emission: no probe outlives it
+    _EMIT_DEPTH[0] += 1
+    try:
+        _emit_ast_body(ast, indent, out, nxt)
+    finally:
+        _EMIT_DEPTH[0] -= 1
+
+
+def _emit_ast_body(ast, indent, out, nxt):
     for node in ast:
         k = node[0]
         if k == 'block':
@@ -857,6 +900,8 @@ def _natural_loops(tc, header):
             N |= vm_cfg.natural_loop(u, h, cfg)
         nodes_of[h] = N
     hs = list(nodes_of)
+    if any(_is_sink(h) for h in hs):                  # a sink 'header' = an orphaned residue -- bail
+        return None
     outer = [hi for hi in hs if all(hi == hj or hi not in nodes_of[hj] for hj in hs)]
     for i in range(len(outer)):                       # outermost loops must be pairwise disjoint
         for j in range(i + 1, len(outer)):
@@ -1205,8 +1250,12 @@ def _switches_in(tc, header):
         # carried in EACH case's body, so the emit DUPLICATES its text but `_ast_cfg` collapses the
         # copies to one block identity (edges[L] set once) — the lowered CFG still matches the
         # witness, and the duplication is the same un-sharing the acyclic path already does.
+        # Post-merge code (dominated by M) is not the switch's -- but only when M comes AFTER S. A
+        # merge that is the enclosing loop's header dominates S itself (cases `continue`), and
+        # excluding by it would empty the region and orphan every case body (rot3k2-SNES $34F4).
+        after = M is not EXIT and S in dom.get(M, set())
         region = {b for b in tc['leaders'] if b is not EXIT and S in dom.get(b, set())
-                  and b != S and b != M and not (M is not EXIT and M in dom.get(b, set()))}
+                  and b != S and b != M and not (after and M in dom.get(b, set()))}
         if region - seen:                              # a region block reached by no case → bail
             return None
         out.append({'S': S, 'merge': M, 'meta': meta, 'targets': targets,
@@ -1301,7 +1350,11 @@ def dream_ast(lines, instructions):
     gate. PURE-ACYCLIC subs (no loop, no switch) keep the original `_acyclic_seq` path — with `||`
     recovery (`do_orchains=True`), whose collapse the gate mirrors on the raw witness. Loop/switch
     subs route through `_structure_tc` (no `||` collapse: the gate lowers the un-collapsed witness)."""
-    tc = tagged_cfg(lines, instructions)
+    return dream_ast_tc(tagged_cfg(lines, instructions))
+
+
+def dream_ast_tc(tc):
+    """dream_ast from a tagged CFG (see tagged_cfg_graph for the host-neutral way to build one)."""
     leaders = tc['leaders']
     if not leaders:
         return None
@@ -1795,21 +1848,70 @@ def dream_structure_gated(lines, instructions):
     This is the SAME validated chain `_emit_one` reports interactively, with the verdict
     turned into a value rather than printed — so a sub is DREAM-owned in the canonical
     `decompiled/*.c` exactly when `dream.py --emit` would tag it PASS or RE-SHARED."""
+    return _gated(lines, lambda: dream_ast(lines, instructions))
+
+
+def dream_structure_gated_graph(lines, cfg, leaders, why=None):
+    """dream_structure_gated for a ready block graph (any host; see tagged_cfg_graph)."""
+    return _gated(lines, lambda: dream_ast_tc(tagged_cfg_graph(lines, cfg, leaders)), why)
+
+
+EMIT_CAP = 200_000      # emitted lines: far beyond any real routine (DUP_CAP rejects far less)
+
+
+def _ast_size(ast, memo=None):
+    """How many lines _emit_ast would write. The AST shares sub-sequences (a merge reached from
+    several arms is the same list), so it is a DAG walked as a tree and its emitted size can be
+    exponential in the routine; counting each shared list once (by identity) keeps this cheap."""
+    memo = {} if memo is None else memo
+    if id(ast) in memo:
+        return memo[id(ast)]
+    n = 0
+    for node in ast:
+        k = node[0]
+        if k == 'block':
+            n += len(node[2])
+        elif k == 'loop':
+            n += 2 + _ast_size(node[2], memo)
+        elif k == 'switch':
+            n += 2 + len(node[2]) + sum(len(labs) + _ast_size(body, memo) for labs, body in node[4])
+        elif k == 'guard':
+            n += 2 + _ast_size([node[2]], memo)
+        elif k == 'if':
+            n += 3 + _ast_size(node[5], memo) + _ast_size(node[6], memo)
+        else:
+            n += 1
+    memo[id(ast)] = n
+    return n
+
+
+def _gated(lines, build, why=None):
+    """The gated emit shared by both entries: `build()` -> dream_ast's (ast, tc, nxt) or None.
+    `why` (a list), when given, receives the verdict: 'dream', 'reshared', or the reject cause."""
+    def no(cause):
+        if why is not None:
+            why.append(cause)
+        return lines
     try:
-        built = dream_ast(lines, instructions)        # None ⇒ out of scope (unhandled shape)
-    except Exception:
-        return lines
+        built = build()                               # None ⇒ out of scope (unhandled shape)
+    except Exception as e:
+        return no("build error: %s" % type(e).__name__)
     if built is None:
-        return lines
+        return no("out of scope")
     ast, tc, nxt = built
+    if _ast_size(ast) > EMIT_CAP:                     # its emission would explode: the duplication
+        return no("emit cap")                         # cap rejects it anyway (rot3k2-SNES root $2A21)
     out = []
-    _emit_ast(ast, 1, out, nxt)                        # base indent 1 = inside the function body
+    try:
+        _emit_ast(ast, 1, out, nxt)                    # base indent 1 = inside the function body
+    except Exception as e:
+        return no("emit error: %s" % type(e).__name__)
     try:
         ok = dream_equivalent_ast(lines, ast, tc, tc['leaders'])
     except Exception:
         ok = False
     if not ok:
-        return lines
+        return no("gate reject")
     if _max_dup(out) > DUP_CAP:                        # idiomatic-goto re-share the shared sink
         rwork = _reshare(ast, tc, nxt)
         rout = []
@@ -1819,8 +1921,12 @@ def dream_structure_gated(lines, instructions):
         except Exception:
             rok = False
         if rok and _max_dup(rout) <= DUP_CAP:
+            if why is not None:
+                why.append("reshared")
             return rout
-        return lines                                   # honest over-dup ⇒ V2 reads better
+        return no("over-dup")                          # honest over-dup ⇒ V2 reads better
+    if why is not None:
+        why.append("dream")
     return out
 
 
