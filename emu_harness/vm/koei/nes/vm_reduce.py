@@ -89,7 +89,7 @@ are proven FIRST, before any rule can introduce a bug.
 import re
 from collections import defaultdict
 
-from emu_harness.vm.koei import vm_cfg
+from emu_harness.vm.koei.nes import vm_cfg
 
 
 # === Rung 1: block model + trivial emit ========================================

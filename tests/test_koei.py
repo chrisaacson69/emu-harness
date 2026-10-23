@@ -9,12 +9,12 @@ from emu_harness.core.alias import alias_package
 
 
 def test_alias_gives_the_same_module_objects():
-    alias_package("koei_alias_test", "emu_harness.vm.koei")
-    import emu_harness.vm.koei.vm_decompile as real
+    alias_package("koei_alias_test", "emu_harness.vm.koei", also=("emu_harness.vm.koei.nes",))
+    import emu_harness.vm.koei.nes.vm_decompile as real
     import koei_alias_test.vm_decompile as via_alias
     from koei_alias_test import vm_cfg
     assert via_alias is real
-    assert vm_cfg.__name__ == "emu_harness.vm.koei.vm_cfg"
+    assert vm_cfg.__name__ == "emu_harness.vm.koei.nes.vm_cfg"
 
 
 def test_python_dash_m_through_an_alias(tmp_path):
@@ -40,7 +40,7 @@ class _Bytes:
 
 def test_lengths_measured_on_the_nes_handlers():
     """F2: what every NES title's own handlers consume (tools/koei_isa_probe.py)."""
-    from emu_harness.vm.koei.vm_disasm import instr_len
+    from emu_harness.vm.koei.nes.vm_disasm import instr_len
     assert instr_len(_Bytes(0xAD), 0) == 3                       # blkcopy: 2 operand bytes
     assert [instr_len(_Bytes(op), 0) for op in (0xE0, 0xE1, 0xE2)] == [3, 3, 3]   # bitfield #i16
     assert [instr_len(_Bytes(0xB7, e), 0) for e in (0x0B, 0x0C, 0x13, 0x14)] == [2, 4, 4, 2]
@@ -64,7 +64,7 @@ def test_nes_decoder_agrees_with_the_snes_table():
 
 def test_the_fixed_region_is_the_last_16k_of_prg():
     """UW's 512K cart: $C000 is the last 16K of PRG (8K banks 62/63), not 16K bank 15 (F2)."""
-    from emu_harness.vm.koei.cpu6502 import Memory
+    from emu_harness.vm.koei.nes.cpu6502 import Memory
     prg = bytearray(0x80000)
     prg[0x7C000], prg[0x3C000] = 0xAA, 0x15
     m = Memory(b"NES\x1a" + bytes([0x20, 0, 0x52, 0]) + bytes(8) + bytes(prg))
@@ -72,7 +72,7 @@ def test_the_fixed_region_is_the_last_16k_of_prg():
 
 
 def test_na1_certified_folds_apply_to_na1_only():
-    from emu_harness.vm.koei import vm_decompile as VC
+    from emu_harness.vm.koei.nes import vm_decompile as VC
     VC.set_schema("gk")
     assert VC._EXTOP_OVERRIDE == {}
     VC.set_schema("na1")

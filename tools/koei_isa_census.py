@@ -4,7 +4,7 @@
 
 The two toolchains grew independently over one engine (koei-snes docs/koei-nes-vs-snes.md: "opcode
 numbers line up"). This lists, per primary opcode and per $B7-extended opcode, what each side says:
-  NES   the encoded length emu_harness.vm.koei.vm_disasm.instr_len uses (with zero operand bytes;
+  NES   the encoded length emu_harness.vm.koei.nes.vm_disasm.instr_len uses (with zero operand bytes;
         a switch is "var"), the mnemonic (nobunaga_vm.OPCODE_INFO), and the control-flow class its
         decoder implies (vm_disasm's terminator / branch / call sets)
   SNES  the shared table, vm/koei/vm_opcode_names.toml, through its SNES loader (vm_isa): name, cf, size, dead
@@ -17,8 +17,8 @@ import argparse
 import sys
 from pathlib import Path
 
-from emu_harness.vm.koei import vm_disasm as VD
-from emu_harness.vm.koei.nobunaga_vm import OPCODE_INFO
+from emu_harness.vm.koei.nes import vm_disasm as VD
+from emu_harness.vm.koei.nes.nobunaga_vm import OPCODE_INFO
 
 from emu_harness.vm.koei.snes import vm_isa  # noqa: E402  (the shared table, through its SNES loader)
 

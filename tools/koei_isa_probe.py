@@ -14,9 +14,9 @@ Compared with the NES decoder's lengths and the SNES table (tools/koei_isa_censu
 import argparse
 import sys
 
-from emu_harness.vm.koei import titles
-from emu_harness.vm.koei import vm_disasm as VD
-from emu_harness.vm.koei.nobunaga_vm import OPCODE_INFO
+from emu_harness.vm.koei.nes import titles
+from emu_harness.vm.koei.nes import vm_disasm as VD
+from emu_harness.vm.koei.nes.nobunaga_vm import OPCODE_INFO
 from emu_harness.vm.koei.snes import vm_isa
 
 BUF = 0x0300

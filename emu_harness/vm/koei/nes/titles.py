@@ -12,7 +12,7 @@ live in games.toml (next to this file); this driver reads them and drives the VM
   py -3.14 koei_vm.py disasm  <game> <bank> [out.asm]   # render a bank's bytecode VM-asm
   py -3.14 koei_vm.py emulate <game> <0xSUB> [args...]  # run a bytecode sub, print result register
   py -3.14 koei_vm.py games                             # list configured titles
-  (or: py -3.14 -m emu_harness.vm.koei.titles ...)
+  (or: py -3.14 -m emu_harness.vm.koei.nes.titles ...)
 
 `<game>` is a block name in games.toml (na1, ro3k, ...). A title's `repo` is a folder next to
 emu-harness (the sibling convention).
@@ -23,7 +23,7 @@ from pathlib import Path
 from emu_harness.machines.nes.memory import Cart, Windows
 
 HERE = Path(__file__).resolve()
-SIBLINGS = HERE.parents[4]                         # koei -> vm -> emu_harness -> emu-harness -> the sibling root
+SIBLINGS = HERE.parents[5]                         # nes -> koei -> vm -> emu_harness -> emu-harness -> the sibling root
 GAMES_TOML = HERE.parent / "games.toml"
 
 
@@ -149,8 +149,8 @@ def _import_core():
 
 def disasm(name, bank, out=None):
     cfg = game_cfg(name); _import_core()
-    import emu_harness.vm.koei.vm_disasm as VD
-    from emu_harness.vm.koei.nobunaga_vm import NobunagaVM
+    import emu_harness.vm.koei.nes.vm_disasm as VD
+    from emu_harness.vm.koei.nes.nobunaga_vm import NobunagaVM
     VD.VM_ENTRY_STUB = bytes(int(b, 16) for b in cfg["vm_entry_stub"].split())
     VD.ROM_NAME = cfg["rom"]                            # per-title banner (was hardcoded NA1)
     VD.BANK_SIZE = cfg.get("bank_size", 0x4000)        # 0x2000 for MMC5 8K-bank titles (na2)
@@ -239,13 +239,13 @@ def resolve_syscall_entry_calls(text, entry_names, sysmap):
 
 def decompile(name, bank, asm_in, out=None, raw=False):
     """Batch bytecode->C for one bank's rendered VM-asm (generalizes vm_decompile_<game>.py).
-    Reuses emu_harness.vm.koei.vm_decompile verbatim; feeds the title's bank-scoped labels so CALL targets
+    Reuses emu_harness.vm.koei.nes.vm_decompile verbatim; feeds the title's bank-scoped labels so CALL targets
     render with this game's names. `asm_in` is the listing produced by `disasm <game> <bank>`.
     raw=True disables ALL structuring -> the direct goto/label C (the `3-c-basic` baseline that the
     DREAM structurer folds into `4-c`); the two differ only by structure, same labels."""
     import io, contextlib
     cfg = game_cfg(name); _import_core()
-    import emu_harness.vm.koei.vm_decompile as VC
+    import emu_harness.vm.koei.nes.vm_decompile as VC
     if raw:
         VC.STRUCTURE = False; VC.STRUCTURE_V2 = False; VC.STRUCTURE_DREAM = False
     labs = bank_scoped_labels(cfg, bank)              # addr -> (name, comment)
@@ -286,7 +286,7 @@ def decompile(name, bank, asm_in, out=None, raw=False):
 def make_vm(name):
     """Return an emulator instance retargeted to <game> -- the generic version of emulator_rotk.py."""
     cfg = game_cfg(name); _import_core()
-    from emu_harness.vm.koei.nobunaga_vm import NobunagaVM
+    from emu_harness.vm.koei.nes.nobunaga_vm import NobunagaVM
     disp = cfg["dispatcher"]
     class _VM(NobunagaVM):
         DISPATCHER_ADDR = disp

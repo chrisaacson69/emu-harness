@@ -29,11 +29,11 @@ import sys
 import tempfile
 from pathlib import Path
 
-from emu_harness.vm.koei.titles import game_cfg as _game_cfg
+from emu_harness.vm.koei.nes.titles import game_cfg as _game_cfg
 
 ROOT = Path(_game_cfg("na1")["_root"])                         # nobunaga/, through the [na1] profile (F1b)
 
-from emu_harness.vm.koei import nobunaga_vm
+from emu_harness.vm.koei.nes import nobunaga_vm
 
 CODE_BANKS = [0, 1, 2, 10, 14, 15]
 ROM_PATH = ROOT / "Nobunaga's Ambition (USA).nes"
@@ -210,7 +210,7 @@ def main():
     ap.add_argument("--out", default=str(ROOT / "source" / "4-c" / "all_banks.c"),
                     help="output path (default: source/4-c/all_banks.c)")
     args = ap.parse_args()
-    from emu_harness.vm.koei.cli import decompile_all
+    from emu_harness.vm.koei.nes.cli import decompile_all
     records, warnings = build(decompile_all.bank_subs)
     text = render(records, warnings)
     out_path = Path(args.out)

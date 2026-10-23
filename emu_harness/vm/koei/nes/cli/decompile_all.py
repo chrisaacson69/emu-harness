@@ -29,7 +29,7 @@ from pathlib import Path
 # NA1's project root (nobunaga/) and labels, through its title profile (games.toml [na1]). They
 # used to be three levels up from this file, which stopped being NA1 when the package left
 # na1-decompiler (emu-harness MIGRATION.md row F1b).
-from emu_harness.vm.koei.titles import game_cfg as _game_cfg
+from emu_harness.vm.koei.nes.titles import game_cfg as _game_cfg
 
 ROOT = Path(_game_cfg("na1")["_root"])
 
@@ -78,10 +78,10 @@ def _switchable_section_labels():
 SWITCHABLE_NAMES, SECTIONED_WINDOW = _switchable_section_labels()
 
 
-from emu_harness.vm.koei import vm_disasm as vmdisasm
-from emu_harness.vm.koei import vm_decompile
-from emu_harness.vm.koei import dream         # DREAM structurer (CFG epic rung-6 cutover; PRIMARY structurer)
-from emu_harness.vm.koei.nobunaga_vm import NobunagaVM
+from emu_harness.vm.koei.nes import vm_disasm as vmdisasm
+from emu_harness.vm.koei.nes import vm_decompile
+from emu_harness.vm.koei.nes import dream         # DREAM structurer (CFG epic rung-6 cutover; PRIMARY structurer)
+from emu_harness.vm.koei.nes.nobunaga_vm import NobunagaVM
 
 # Wire the DREAM cutover hook: decompile()'s STRUCTURE_DREAM path calls structure_dream
 # per sub, using DREAM where its AST-native gate passes and falling back to V2 otherwise.
@@ -229,7 +229,7 @@ def run_self_check():
     matches the audited vm_stack_effect.STACK_EFFECT. Catches the $30-$3F / $B2 bug class.
     Lives here (not in vm_decompile) so it shares THIS module's `import vm_decompile`
     instance — the flag/trace globals must be the ones bank_subs() actually writes."""
-    from emu_harness.vm.koei.vm_stack_effect import STACK_EFFECT, GATED_CLASSES
+    from emu_harness.vm.koei.nes.vm_stack_effect import STACK_EFFECT, GATED_CLASSES
     vm_decompile.SELF_CHECK = True
     vm_decompile._STACK_TRACE = []
     try:
@@ -323,7 +323,7 @@ def main():
     # requested (a partial --banks run is a per-bank iteration; the merged view is always
     # all 4 code banks). Lazy import avoids a circular load (decompile_merged reuses bank_subs).
     if not args.no_merged and banks == CODE_BANKS:
-        from emu_harness.vm.koei.cli import decompile_merged as merged
+        from emu_harness.vm.koei.nes.cli import decompile_merged as merged
         records, warnings = merged.build(bank_subs)
         merged_path = out_dir / c_stage / f"all_banks{suffix}.c"
         merged_path.parent.mkdir(parents=True, exist_ok=True)

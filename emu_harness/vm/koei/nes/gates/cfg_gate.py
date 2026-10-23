@@ -29,10 +29,10 @@ from contextlib import redirect_stdout
 from pathlib import Path
 
 
-from emu_harness.vm.koei import vm_cfg
-from emu_harness.vm.koei import vm_decompile
-from emu_harness.vm.koei import dream
-from emu_harness.vm.koei.cli import decompile_all
+from emu_harness.vm.koei.nes import vm_cfg
+from emu_harness.vm.koei.nes import vm_decompile
+from emu_harness.vm.koei.nes import dream
+from emu_harness.vm.koei.nes.cli import decompile_all
 
 CODE_BANKS = [0, 1, 2, 10, 14, 15]
 

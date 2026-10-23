@@ -11,14 +11,24 @@ import importlib
 import importlib.abc
 import importlib.util
 import sys
+import types
 
 
 class _Alias(importlib.abc.MetaPathFinder, importlib.abc.Loader):
-    def __init__(self, old: str, new: str):
-        self.old, self.new = old, new
+    def __init__(self, old: str, new: str, also: tuple[str, ...] = ()):
+        self.old, self.new, self.also = old, new, also
 
     def _real(self, fullname):
-        return self.new + fullname[len(self.old):]
+        """The first of new.x, also[0].x, ... that exists (a package can be split after it moved)."""
+        tail = fullname[len(self.old):]
+        for pkg in (*self.also, self.new):
+            name = pkg + tail
+            try:
+                if importlib.util.find_spec(name) is not None:
+                    return name
+            except ModuleNotFoundError:
+                pass
+        return self.new + tail
 
     def find_spec(self, fullname, path=None, target=None):
         if not fullname.startswith(self.old + "."):
@@ -42,10 +52,27 @@ class _Alias(importlib.abc.MetaPathFinder, importlib.abc.Loader):
         return importlib.util.find_spec(real).loader.get_code(real)
 
 
-def alias_package(old: str, new: str):
-    """Make `old` and every `old.x` resolve to `new` / `new.x`. Returns the real package."""
+def alias_package(old: str, new: str, also: tuple[str, ...] = ()):
+    """Make `old` resolve to `new`, and every `old.x` to the first of `also[0].x`, `also[1].x`, ...,
+    `new.x` that exists (for a package that was split into subpackages after it moved).
+    Returns the real package."""
     real = importlib.import_module(new)
-    sys.modules[old] = real
     if not any(isinstance(f, _Alias) and f.old == old for f in sys.meta_path):
-        sys.meta_path.insert(0, _Alias(old, new))
+        sys.meta_path.insert(0, _Alias(old, new, tuple(also)))
+    # The old name gets its own small package object. Putting `real` itself there would make
+    # `from old import x` look for `x` under the REAL name, missing a submodule that moved to an
+    # `also` package; this proxy routes every attribute it lacks through the finder above.
+    proxy = types.ModuleType(old, real.__doc__)
+    proxy.__path__ = []                               # a package: `old.x` imports reach the finder
+
+    def __getattr__(name):
+        if hasattr(real, name):
+            return getattr(real, name)
+        try:
+            return importlib.import_module(f"{old}.{name}")
+        except ModuleNotFoundError:
+            raise AttributeError(f"module {old!r} has no attribute {name!r}") from None
+
+    proxy.__getattr__ = __getattr__
+    sys.modules[old] = proxy
     return real

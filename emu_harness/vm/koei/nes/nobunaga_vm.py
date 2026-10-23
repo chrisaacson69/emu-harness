@@ -17,12 +17,12 @@ import sys
 import re
 from pathlib import Path
 
-from emu_harness.vm.koei.cpu6502 import Memory, CPU6502
+from emu_harness.vm.koei.nes.cpu6502 import Memory, CPU6502
 
 # Data anchors: the default ROM + labels are NA1's, found through its title profile (games.toml
 # [na1]); the opcode table ships inside the package. (They used to be computed from this file's
 # location, which stopped pointing at NA1 when the package left na1-decompiler; MIGRATION.md F1b.)
-from emu_harness.vm.koei.titles import game_cfg as _game_cfg
+from emu_harness.vm.koei.nes.titles import game_cfg as _game_cfg
 
 _PKG = Path(__file__).parent
 _NA1 = _game_cfg("na1")

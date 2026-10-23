@@ -21,7 +21,7 @@ Usage (PoC dump):
 """
 import re
 import sys
-from emu_harness.vm.koei import vm_cfg
+from emu_harness.vm.koei.nes import vm_cfg
 
 # --------------------------------------------------------------------------- #
 # Boolean layer. Expressions are immutable tuples in a canonical-ish form:
@@ -197,7 +197,7 @@ def to_c(e):
 # under which it is taken.
 # --------------------------------------------------------------------------- #
 def tagged_cfg(lines, instructions):
-    from emu_harness.vm.koei import vm_reduce
+    from emu_harness.vm.koei.nes import vm_reduce
     cfg, leaders = vm_cfg.bytecode_cfg(instructions)
     block_of = vm_cfg._block_of_fn(leaders)
     buckets = vm_reduce._partition(lines, leaders)
@@ -1446,8 +1446,8 @@ def dream_equivalent_ast(raw_lines, ast, tc, leaders):
 def _capture_sub(bank, sub_addr_hex):
     import pathlib
     import tempfile
-    from emu_harness.vm.koei.cli import decompile_all as da
-    from emu_harness.vm.koei import vm_decompile
+    from emu_harness.vm.koei.nes.cli import decompile_all as da
+    from emu_harness.vm.koei.nes import vm_decompile
     target = int(sub_addr_hex, 16)
     grab = {}
 
@@ -1495,8 +1495,8 @@ def _capture_all(bank):
     """Capture (raw_lines, instructions) for EVERY sub in a bank via the structure_v2 hook."""
     import pathlib
     import tempfile
-    from emu_harness.vm.koei.cli import decompile_all as da
-    from emu_harness.vm.koei import vm_decompile
+    from emu_harness.vm.koei.nes.cli import decompile_all as da
+    from emu_harness.vm.koei.nes import vm_decompile
     grab = {}
 
     def cap(lines, instructions):
@@ -1540,7 +1540,7 @@ def dream_equivalent(raw_lines, dream_lines, leaders):
     CFG directly from the DREAM AST (block identity is known structurally, flush irrelevant).
     Kept behind `--check2` as the concept proof (genuine reorder wins DID appear: $E3A9,
     $93C4, $A6CA, $AD3D); NOT used by `--check` or anything else."""
-    from emu_harness.vm.koei import vm_cfg
+    from emu_harness.vm.koei.nes import vm_cfg
     EXIT = vm_cfg.EXIT
     real = [L for L in leaders if L != EXIT]
     if not real:
@@ -1679,7 +1679,7 @@ def _reshare(ast, tc, nxt):
 def _check(bank, verbose=False):
     """Spike-A measurement: run dream_structure over every sub in `bank`, gate each vs its
     raw witness, and tally folded / gate-rejected / over-duplicated / passthrough + goto deltas."""
-    from emu_harness.vm.koei import vm_cfg
+    from emu_harness.vm.koei.nes import vm_cfg
     grab = _capture_all(bank)
     elig = folded = rejected = overdup = passthrough = reshared = 0
     g_raw_e = g_dream_e = g_reshared = 0               # goto totals over ELIGIBLE-and-validated
@@ -1749,7 +1749,7 @@ def _check(bank, verbose=False):
 
 def _emit_one(bank, sub_addr_hex):
     """Dump the structured C dream_structure produces for one sub + the gate verdict."""
-    from emu_harness.vm.koei import vm_cfg
+    from emu_harness.vm.koei.nes import vm_cfg
     lines, instrs = _capture_sub(bank, sub_addr_hex)
     built = dream_ast(lines, instrs)                  # None ⇒ out of scope (switch / unhandled loop)
     if built is None:
@@ -1828,7 +1828,7 @@ def _check2(bank):
     """Compare the OLD address-anchored gate vs the NEW reorder-tolerant gate over a bank's
     eligible subs: how many more does reorder-tolerance recover, and is any NEWLY-PASSING
     sub actually wrong (sanity: new gate should be a strict superset that stays sound)?"""
-    from emu_harness.vm.koei import vm_cfg
+    from emu_harness.vm.koei.nes import vm_cfg
     grab = _capture_all(bank)
     old_ok = new_ok = elig = 0
     newly = []
@@ -1865,7 +1865,7 @@ def _check3(bank, verbose=False):
     """Measure the AST-NATIVE gate (`dream_equivalent_ast`) vs the OLD address-anchored gate
     over a bank's eligible subs. Reports validated counts, the reorder wins (newly passing),
     and any REGRESSION (old-pass / new-fail — should be empty if the AST gate is sound)."""
-    from emu_harness.vm.koei import vm_cfg
+    from emu_harness.vm.koei.nes import vm_cfg
     grab = _capture_all(bank)
     old_ok = new_ok = elig = guard = 0
     newly, regress = [], []

@@ -744,7 +744,7 @@ finished toolset, not just the items below.
 | gk-decompiler | `source/4-c/bank_05.c` `$8327` carries NA1's certified `scale_div10_capcheck` formula (leaked by address); a regeneration gives its real body | row F1b |
 | UW-decompile | `source/4-c/bank38.c` has `// DECOMPILE ERROR @$8327` (the leaked NA1 fold); a regeneration decompiles it | row F1b |
 | gk, ro3k, na2, rot3k2, GemFire, LEmp, UW | Committed bytecode listings and C mis-decode `$B7 $0C`–`$13` (251 uses): operand bytes shown as `UNK` / `op_EB` / `op_FF`, sometimes fake `trigger_syscall_EB_FE` and phantom arguments (ro3k bank 3). A regeneration fixes them. | row F2 |
-| UW-decompile | Committed bank 62/63 listings and C decode banks 30/31's bytes (the 16K-bank-15 fixed-region bug). Bank 63 is also rendered at `$A000`, not `$E000`. Fixed-bank call targets are tagged wrongly in other banks. | row F2 |
+| UW-decompile | Other banks' committed listings tag calls into the fixed `$C000` bank `{native}`/`{bytecode}` from the wrong bytes (the 16K-bank-15 fixed-region bug in the generic driver). The committed bank 62/63 listings and C are right: UW made them with its own `disasm_fixed_bytecode` workaround. (Corrected 2026-10-23: an earlier version of this row said they decode banks 30/31.) | row F2 |
 
 ## Open questions (Chris)
 

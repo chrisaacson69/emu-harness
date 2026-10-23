@@ -30,7 +30,7 @@ from pathlib import Path
 # pointed nowhere and the names silently dropped out. emu-harness MIGRATION.md row F1b.)
 # Minimal parser — no external toml dependency.
 def _load_asset_enums(game="na1"):
-    from emu_harness.vm.koei.titles import game_cfg
+    from emu_harness.vm.koei.nes.titles import game_cfg
     p = Path(game_cfg(game)["_root"]) / "asset-enums.toml"
     arg_enums, enums = {}, {}
     if not p.exists():
@@ -145,7 +145,7 @@ def structure_v2(lines, instructions):
     """The region-reducer structurer (CFG epic V2). Thin delegate to vm_reduce.reduce
     so the reducer lives in its own module; this keeps the gate-wiring in decompile()
     one symbol to swap when V2 dominates. Rung 0: passthrough (returns raw lines)."""
-    from emu_harness.vm.koei import vm_reduce
+    from emu_harness.vm.koei.nes import vm_reduce
     return vm_reduce.reduce(lines, instructions)
 
 
@@ -1105,7 +1105,7 @@ def decompile(filepath, sub_addr, labels=None, var_names=None, collect=None):
     # both loads are dropped and only one value survives). The diamond's head branch + the
     # fall-arm jump emit NO line; the bytecode CFG side contracts the same diamonds
     # (vm_cfg.bytecode_cfg) so the gate's `lower(raw) == bytecode_cfg` stays valid.
-    from emu_harness.vm.koei import vm_cfg as _vmcfg
+    from emu_harness.vm.koei.nes import vm_cfg as _vmcfg
     # Consuming-call STACK-PHI repair: at each predecessor's exit to a multi-pred merge, store the
     # call's args (top-N stack entries) into per-merge temps so the shared call pops named temps
     # instead of dropping all but the fall-through pred's pushes (the silent value-drop bug).
@@ -1691,7 +1691,7 @@ def decompile(filepath, sub_addr, labels=None, var_names=None, collect=None):
             structured = structure_v2(state.lines, instructions)   # V2 fallback
             structured_ungated, structurer = structured, 'v2'
             if structured is not state.lines:
-                from emu_harness.vm.koei import vm_cfg
+                from emu_harness.vm.koei.nes import vm_cfg
                 _leaders = vm_cfg.bytecode_cfg(instructions)[1]
                 r, _nr, _ns = vm_cfg.structured_equivalent(state.lines, structured, _leaders)
                 if not r:
@@ -1706,7 +1706,7 @@ def decompile(filepath, sub_addr, labels=None, var_names=None, collect=None):
         structured = structure_v2(state.lines, instructions)
         structured_ungated = structured
         if structured is not state.lines:
-            from emu_harness.vm.koei import vm_cfg
+            from emu_harness.vm.koei.nes import vm_cfg
             _leaders = vm_cfg.bytecode_cfg(instructions)[1]
             r, _nr, _ns = vm_cfg.structured_equivalent(state.lines, structured, _leaders)
             if not r:
@@ -1720,7 +1720,7 @@ def decompile(filepath, sub_addr, labels=None, var_names=None, collect=None):
         # case bodies on clean goto lines BEFORE the case labels exist — else its if/else span
         # can cross a `case:` boundary and swallow the next case (lexically wrong C the
         # address-based gate would still accept).
-        from emu_harness.vm.koei import vm_cfg as _vc
+        from emu_harness.vm.koei.nes import vm_cfg as _vc
         _case_barriers = frozenset(t for d in _vc.switch_dispatches(instructions)
                                    for _k, t in d['key_targets'])
         looped = structure_loops(state.lines, instructions)
@@ -1735,7 +1735,7 @@ def decompile(filepath, sub_addr, labels=None, var_names=None, collect=None):
         # sub its OTHER valid folds. Order: full -> drop switch -> drop loop+switch -> honest goto.
         structured_ungated = structured
         if structured is not state.lines:
-            from emu_harness.vm.koei import vm_cfg
+            from emu_harness.vm.koei.nes import vm_cfg
             _bc, _leaders = vm_cfg.bytecode_cfg(instructions)
 
             def _ok(cand):
@@ -1863,7 +1863,7 @@ def _is_pure_exit_block(b, cfg, loop):
     listing span (e.g. a top-test header's fall-through `return`, emitted between the
     test and the body) can be safely RELOCATED to after the loop: the CFG lowering is
     address-keyed, so moving its lines past the `}` leaves its edges unchanged."""
-    from emu_harness.vm.koei import vm_cfg
+    from emu_harness.vm.koei.nes import vm_cfg
     return all(s is vm_cfg.EXIT or s not in loop for s in cfg.get(b, ()))
 
 
@@ -1875,7 +1875,7 @@ def _loop_single_entry(cfg, loop, h, exit_e):
     honest `return`/`break`/`goto` and the gate validates the edges. A non-loop
     successor that is NOT exit_e and NOT pure-exit (i.e. it re-enters live code) is a
     genuine second structural exit we don't structure yet -> reject."""
-    from emu_harness.vm.koei import vm_cfg
+    from emu_harness.vm.koei.nes import vm_cfg
     for n in loop:
         for s in cfg[n]:
             if s is vm_cfg.EXIT or s in loop or s == exit_e:
@@ -1898,7 +1898,7 @@ def _emit_break_continue(out, leaders, loop, h, exit_e):
     every other in-body goto (to a sibling label) is left alone. The CFG gate is the
     backstop: break lowers to the loop exit, continue to the header, so a mis-rewrite
     would change the lowered CFG and be rejected (reverting the whole sub to goto)."""
-    from emu_harness.vm.koei import vm_cfg
+    from emu_harness.vm.koei.nes import vm_cfg
     block_of = vm_cfg._block_of_fn(leaders)
     exit_lbl = None if exit_e is vm_cfg.EXIT else f"L_{exit_e:04X}"
     head_lbl = f"L_{h:04X}"
@@ -1957,7 +1957,7 @@ def _fold_siblings(lines, cfg, leaders, bes):
     indices. Each fold is GATED against the raw witness on its own, so one bad sibling fold
     can't sink the others (and the sub keeps every good one). NESTED / overlapping loops
     (a loop inside another) need inner-then-outer folding — still deferred (the big bucket)."""
-    from emu_harness.vm.koei import vm_cfg
+    from emu_harness.vm.koei.nes import vm_cfg
     by_header = {}
     for u, h in bes:
         by_header.setdefault(h, set()).update(vm_cfg.natural_loop(u, h, cfg))
@@ -1984,7 +1984,7 @@ def structure_loops(lines, instructions):
     a sub with several DISJOINT headers folds each sibling (`_fold_siblings`, Phase 1c).
     Nested loops (a header inside another's body) are still deferred. The CFG-equivalence
     gate is the backstop — a mis-fold reverts (per-sibling, or the whole sub) to honest goto."""
-    from emu_harness.vm.koei import vm_cfg
+    from emu_harness.vm.koei.nes import vm_cfg
     cfg, leaders = vm_cfg.bytecode_cfg(instructions)
     if len(leaders) < 2:
         return lines
@@ -2011,7 +2011,7 @@ def _fold_while(lines, cfg, leaders, loop, u, h, multi=False):
     structural tail (the back-goto that is the very last loop line) is dropped into the
     `while`; every OTHER in-body `goto L_h` is left in place for `_emit_break_continue`
     to rewrite as `continue;`. `u` is unused (kept for call symmetry)."""
-    from emu_harness.vm.koei import vm_cfg
+    from emu_harness.vm.koei.nes import vm_cfg
     body_in = [s for s in cfg[h] if s in loop]
     exit_out = [s for s in cfg[h] if s not in loop]
     if len(body_in) != 1 or len(exit_out) != 1:
@@ -2104,7 +2104,7 @@ def _fold_dowhile(lines, cfg, leaders, loop, u, h):
     exit. NO hoist — the test stays where it is, so address order is preserved and the
     only edits are `L_h:` -> `do {` and the tail test -> `} while (C);`. Covers both
     self-loops (u == h) and multi-block bottom-test loops (h < u)."""
-    from emu_harness.vm.koei import vm_cfg
+    from emu_harness.vm.koei.nes import vm_cfg
     succ_u = cfg[u]
     if h not in succ_u or len(succ_u) != 2:
         return lines
@@ -2184,7 +2184,7 @@ def _fold_while1(lines, cfg, leaders, loop, h):
     (Phase 3 inlines case bodies). Requires the loop top to be the FIRST line of the
     span (no rotation) and any interleaved foreign block to be pure-exit (a mid-body
     return/break that reads correctly in place)."""
-    from emu_harness.vm.koei import vm_cfg
+    from emu_harness.vm.koei.nes import vm_cfg
     block_of = vm_cfg._block_of_fn(leaders)
     if not _loop_single_entry(cfg, loop, h, None):
         return lines
@@ -2250,7 +2250,7 @@ def structure_switches(lines, instructions):
     could become `break` (left for a follow-up). The CFG gate is the backstop: a fold that is
     not CFG-preserving reverts the whole sub to honest goto.
     """
-    from emu_harness.vm.koei import vm_cfg
+    from emu_harness.vm.koei.nes import vm_cfg
     dispatches = {d['switch_addr']: d for d in vm_cfg.switch_dispatches(instructions)}
     if not dispatches:
         return lines
@@ -2540,7 +2540,7 @@ def check_stack_trace():
     skipped (the decompiler models calls via variable arity / registers, not a fixed
     data-stack Δ). See _SELF_CHECK_EXCLUDE for documented per-opcode carve-outs."""
     from collections import defaultdict
-    from emu_harness.vm.koei.vm_stack_effect import STACK_EFFECT, GATED_CLASSES
+    from emu_harness.vm.koei.nes.vm_stack_effect import STACK_EFFECT, GATED_CLASSES
     observed = defaultdict(set)
     for i in range(len(_STACK_TRACE) - 1):
         op, depth = _STACK_TRACE[i]
@@ -2569,14 +2569,14 @@ def main():
     # Load mesen labels so standalone runs name functions like the batch driver.
     labels = None
     try:
-        from emu_harness.vm.koei.nobunaga_vm import load_labels
+        from emu_harness.vm.koei.nes.nobunaga_vm import load_labels
         labels = load_labels()
     except Exception:
         pass
     # Var-walk names: bank inferred from the listing filename (bank_NN_vm.asm).
     var_names = None
     try:
-        from emu_harness.vm.koei.titles import game_cfg      # NA1's labels (the standalone default)
+        from emu_harness.vm.koei.nes.titles import game_cfg      # NA1's labels (the standalone default)
         toml = Path(game_cfg("na1")["_labels"])
         bm = re.search(r'bank_(\d+)', filepath)
         if bm:

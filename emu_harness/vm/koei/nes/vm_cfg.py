@@ -1948,8 +1948,8 @@ def _selftest(bank, sub_hex):
     import io
     from contextlib import redirect_stdout
     import tempfile
-    from emu_harness.vm.koei.cli import decompile_all as dam
-    from emu_harness.vm.koei import vm_decompile
+    from emu_harness.vm.koei.nes.cli import decompile_all as dam
+    from emu_harness.vm.koei.nes import vm_decompile
     sub = int(sub_hex, 16)
     with tempfile.TemporaryDirectory() as td:
         captured = {}

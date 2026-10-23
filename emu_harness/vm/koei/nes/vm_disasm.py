@@ -44,7 +44,7 @@ import sys
 from pathlib import Path
 
 from emu_harness.vm.koei.isa import TABLE as ISA_TABLE
-from emu_harness.vm.koei.nobunaga_vm import NobunagaVM, OPCODE_INFO
+from emu_harness.vm.koei.nes.nobunaga_vm import NobunagaVM, OPCODE_INFO
 
 ROM_NAME = "Nobunaga's Ambition (USA).nes"  # default (NA1); per-title callers (koei_vm) override from games.toml
 VM_ENTRY_STUB = bytes([0x20, 0x23, 0xE8])  # JSR $E823
