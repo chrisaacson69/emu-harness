@@ -440,6 +440,59 @@ bank.
 **Row H is complete:** one graph and one ordering, with a builder per host (KOEI NES, KOEI SNES,
 native 65816, native 6502 / Mappy).
 
+## Row I done: one walk order (2026-10-23)
+
+**Four per-bank orderers were one job:** bk `walk_order`, ro3k `bc_layers`, UW `walk_bank` and NA1
+`bank-ground-order`. Each built an in-bank call graph from listing text and hand-rolled a
+topological sort with its own cycle hack. (koei-snes `gen_layers`, listed under this row, makes
+the layered *source*; it moved in row F.)
+
+**Now the walk is a view of the row-H graph:** `callgraph <title> --walk BANK [--layers | --list N]`.
+- The bank's routines leaves-first, in the SCC order.
+- Each routine's **layer**, `passes.callgraph.layers`: 0 when it calls nothing in the bank, else
+  1 + its deepest callee's layer, a recursive group sharing one (ro3k's Kahn layering).
+- **Fan-in by call sites:** the graph now counts sites per edge (`Graph.sites`), since how often
+  a routine is used is what ranks it.
+- In-bank callees, and calls out by bank (UW's "existing dependencies").
+- Above the list, the **co-resident gap** (bk's report): every call out of the bank the graph
+  could not give one owner.
+
+**Against the old tools** (in-bank edges, and order validity: each routine after its in-bank
+callees, cycles grouped):
+- **bk:** its regex missed `CALL_abs_imm1`, so its order rested on a fraction of the edges. Bank 2
+  had 1 of 20, bank 9 28 of 173, bank 16 4 of 21. It also shelled out to `py -3`, so it no longer
+  ran. Old ⊆ new.
+- **UW:** identical (bank 18 39/39, bank 29 15/15). In bank 2, one self-call is no longer an
+  ordering edge.
+- **ro3k:** banks 0-2 identical. Bank 15 gains 384 edges, because its natives are routines now.
+- **The gap is honest now.** For bk bank 2 the old report listed 7 cross-window targets, which
+  `coresident_2` resolves. It missed `$A519 → $830E`, a `CALL_abs_imm1` into a window where banks
+  1 *and* 14 both have a routine at that address. That call is the one real gap, and the new view
+  shows it.
+
+**Moved:**
+- bk `walk_order` and ro3k `bc_layers` are thin CLIs.
+- UW `walk_bank` takes its order, local callees and dependencies from the graph, and keeps its
+  per-sub data references (tables pushed, `$6xxx/$7xxx` state): row K's job, kept until then.
+- NA1 `bank-ground-order` and `cluster-anon-subs` stay NA1's. Their grounding-status and
+  comment conventions are NA1's own.
+
+**A break from row H, found and fixed here.** Those two NA1 tools imported `native-call-index.build()`,
+which the H1 thin CLI had removed; H1's oracle checked the tool's output but not its importers. The
+CLI now has a `build()` that gives the old shape from the graph, one inbound entry per call site.
+- `cluster-anon-subs`: identical (8/8 runs).
+- `bank-ground-order`: every changed row traced to the H1-named false edges. These are `branch`
+  edges and the stub's `JSR $E823`, which the old index got by parsing bytecode banks as 6502
+  (`$836A → $83A2 "branch"`). Every bytecode `CALL` edge is unchanged.
+
+**Chris's points: calls the graph cannot see, and MMC5.** A call graph doubles as a code-vs-data
+tool, but only for calls with constant targets. Code reached through a table, `regA`, or a
+trampoline with a computed bank has no edge, so it shows as an orphan or a gap, never silently as
+data. On MMC5 an absolute address means nothing until the bank pair mapped there is known. The
+window model, the exact-entry rule and the co-resident lists settle most calls; what they cannot
+settle is reported as ambiguous with its candidate banks. Those reports, the orphans, and the
+descent's `gaps()` are the inputs for row R (static RE of native games).
+
 ## Row D done: one native-floor tool (2026-10-22)
 
 **Shape.** The 7 copies were not one algorithm with per-title constants: they were 7 stages of

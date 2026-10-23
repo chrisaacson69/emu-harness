@@ -17,6 +17,7 @@ class Graph:
         self.title = title
         self.subs = {}                       # (bank, addr) -> name or None: the routines being walked
         self.edges = defaultdict(set)        # (src, dst) -> {kinds}
+        self.sites = Counter()               # (src, dst) -> how many call sites make that edge (fan-in by use)
         self.bank_edges = defaultdict(set)   # (src_bank, dst_bank) -> {kinds}, incl. edges with a computed entry
         self.roots = defaultdict(set)        # node -> {"vector:NMI", "table:syscall", ...}
         self.data = defaultdict(set)         # src node -> {banks it reads data from}
@@ -25,7 +26,9 @@ class Graph:
         self.failed = []                     # routines a builder could not fully read
 
     def add(self, src, dst, kind):
+        """One call site from `src` to `dst`."""
         self.edges[(src, dst)].add(kind)
+        self.sites[(src, dst)] += 1
         if dst[0] != src[0]:
             self.bank_edges[(src[0], dst[0])].add(kind)
 
@@ -121,6 +124,24 @@ def leaves_first(G, nodes=None):
             calls[s].append(d)
     keep = set(nodes or G.subs)
     return [n for comp in sccs(sorted(keep), lambda n: sorted(c for c in calls[n] if c in keep)) for n in comp]
+
+
+def layers(G, nodes=None):
+    """{routine: layer}: 0 for a routine that calls none of `nodes` (only already-named outside
+    code, or nothing), else 1 + the deepest callee's layer. A recursive group shares one layer.
+    From ro3k-decompiler bc_layers (Kahn peeling, cycles collapsed), computed on the SCC order."""
+    keep = set(nodes or G.subs)
+    calls = defaultdict(set)
+    for (s, d) in G.edges:
+        if s in keep and d in keep and d != s:
+            calls[s].add(d)
+    depth = {}
+    for comp in sccs(sorted(keep), lambda n: sorted(calls[n])):
+        inside = set(comp)
+        outs = [depth[c] for n in comp for c in calls[n] if c not in inside]
+        for n in comp:
+            depth[n] = 1 + max(outs) if outs else 0
+    return depth
 
 
 def bank_order(G):

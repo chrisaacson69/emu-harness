@@ -39,7 +39,7 @@ from pathlib import Path
 
 from emu_harness.core.symbols import names_by_address, read_registry
 from emu_harness.cpu.m6502.descent import Window, descend
-from emu_harness.passes.callgraph import Graph, bank_order, leaves_first
+from emu_harness.passes.callgraph import Graph, bank_order, layers, leaves_first
 from emu_harness.vm.koei.isa import TABLE
 from emu_harness.vm.koei.nes import titles
 
@@ -271,6 +271,56 @@ def _raw_c(title, bank, stubs):
 
 
 # ---- reports --------------------------------------------------------------------------------
+def walk_report(G, bank, summary=False, one_layer=None):
+    """The bottom-up walk of one bank (row I of MIGRATION.md; bk walk_order, ro3k bc_layers, UW
+    walk_bank): its routines leaves-first, each with its layer (0 = calls nothing in this bank),
+    fan-in by call sites, in-bank callees and calls out by bank -- and first, the CO-RESIDENT GAP:
+    every call out of this bank whose owner the graph could not pin down (two banks have a routine
+    there, or the bank is switched at run time). Those are the calls a walk would misread."""
+    from emu_harness.vm.koei.nes.match import is_named
+    nodes = sorted(n for n in G.subs if n[0] == bank)
+    if not nodes:
+        print("bank %d: no routines" % bank)
+        return
+    lay = layers(G, nodes)
+    order = leaves_first(G, nodes)
+    fan = Counter()
+    for (s, d), n in G.sites.items():
+        fan[d] += n
+    named = sum(1 for n in nodes if is_named(G.subs[n]))
+    nl = 1 + max(lay.values())
+    print("bank %d: %d routines (%d named, %d not), %d layers" % (bank, len(nodes), named, len(nodes) - named, nl))
+    gap = [(s, t, why) for s, t, why in G.unresolved if s[0] == bank]
+    print()
+    print("co-resident gap: %d call(s) out of this bank with no single owner" % len(gap))
+    for s, t, why in sorted(gap)[:40]:
+        print("  $%04X -> $%04X   %s" % (s[1], t, why))
+    if summary or one_layer is not None:
+        print()
+        for k in range(nl):
+            members = [n for n in order if lay[n] == k]
+            if one_layer is None:
+                print("  layer %2d: %3d routines" % (k, len(members)))
+            elif k == one_layer:
+                print("layer %d: " % k + " ".join("$%04X" % n[1] for n in members))
+        return
+    print()
+    print("%4s %5s %4s  %-6s %-34s %s" % ("#", "layer", "in", "addr", "name", "calls (this bank | other banks)"))
+    for i, n in enumerate(order, 1):
+        here, out = [], Counter()
+        for d, _ks in G.callees(n):
+            if d == n:
+                continue
+            if d[0] == bank and d in G.subs:
+                here.append("$%04X" % d[1])
+            elif d[0] != bank:
+                out[d[0]] += G.sites[(n, d)]
+        tail = " ".join(sorted(here)) or "-"
+        if out:
+            tail += " | " + " ".join("b%d x%d" % kv for kv in sorted(out.items()))
+        print("%4d %5d %4d  $%04X %-34s %s" % (i, lay[n], fan[n], n[1], (G.subs[n] or "-")[:34], tail))
+
+
 def main(argv):
     ap = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
     ap.add_argument("title")
@@ -283,6 +333,10 @@ def main(argv):
     ap.add_argument("--calls", metavar="ADDR", help="every edge out of ADDR")
     ap.add_argument("--orphans", action="store_true", help="routines with no caller and no root")
     ap.add_argument("--bank", type=int, default=None, help="with --orphans: only this bank")
+    ap.add_argument("--walk", type=int, default=None, metavar="BANK",
+                    help="one bank's walk order: routines leaves-first with layer, fan-in, callees, and the co-resident gap")
+    ap.add_argument("--layers", action="store_true", help="with --walk: the per-layer summary only")
+    ap.add_argument("--list", type=int, default=None, metavar="LAYER", help="with --walk: the routines of one layer")
     a = ap.parse_args(argv[1:])
     G = build(a.title)
     n_edges = sum(1 for (s, d) in G.edges)
@@ -315,6 +369,9 @@ def main(argv):
         print("\ncalls from " + fmt(n))
         for d, ks in sorted(G.callees(n)):
             print("  [%-14s] %s" % (",".join(sorted(ks)), fmt(d)))
+    if a.walk is not None:
+        walk_report(G, a.walk, a.layers, a.list)
+        return 0
     if a.orphans:
         o = G.orphans(a.bank)
         print("\norphans (no caller, no root): %d" % len(o))

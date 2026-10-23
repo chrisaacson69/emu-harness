@@ -77,3 +77,18 @@ def test_iterative_tarjan_matches_the_recursive_order():
         adj = {v: [rng.randrange(n) for _ in range(rng.randint(0, 4))] for v in range(n)}
         nodes = list(range(n)); rng.shuffle(nodes)
         assert sccs(nodes, lambda v: adj[v]) == _tarjan_recursive(nodes, lambda v: adj[v]), trial
+
+
+def test_layers_collapse_recursion_and_sites_count_uses():
+    from emu_harness.passes.callgraph import layers
+    G = Graph("t")
+    for n in [(0, 1), (0, 2), (0, 3), (0, 4)]:
+        G.subs[n] = None
+    G.add((0, 1), (0, 2), "call")
+    G.add((0, 1), (0, 2), "call")          # a second call site, same edge
+    G.add((0, 2), (0, 3), "call")
+    G.add((0, 3), (0, 4), "call")
+    G.add((0, 4), (0, 3), "call")          # 3 <-> 4: one layer
+    lay = layers(G)
+    assert lay[(0, 3)] == lay[(0, 4)] == 0 and lay[(0, 2)] == 1 and lay[(0, 1)] == 2
+    assert G.sites[((0, 1), (0, 2))] == 2 and len(G.edges) == 4
