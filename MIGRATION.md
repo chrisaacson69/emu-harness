@@ -157,7 +157,9 @@ to prove it fails.
      engine; ro3k / UW wrappers onto the driver; stack effects measured. **Row F closed.**
 
    See "Row F1 done" below.
-6. **G: DREAM.** Three implementations at very different maturity; needs an IR contract. Last.
+6. **G: DREAM.** Three implementations at very different maturity; needs an IR contract. ✅ **G1
+   2026-10-23:** one structurer over any host's block graph; SNES runs it. Stopped there by
+   decision: structuring doesn't need to be 100%; conventions are deferred. See "Row G1" below.
 
 ## Decisions (Chris, 2026-10-22)
 
@@ -833,6 +835,17 @@ DREAM's rejects, by cause:
   a bug lead for row G.
 - **Not yet cut over:** the SNES `.c` output still comes from `vm_struct`. Switching it changes
   committed title files, so it is a separate step.
+
+**Decision (Chris, 2026-10-23): row G stops here; structuring does not need to be 100%.**
+DREAM's purpose is decent-looking, readable C. Its authors note that structuring is lossy: past
+the core algorithm it becomes conventions and special cases. Chasing every goto was that trap.
+- Correctness is already settled: the gate proves that whatever DREAM emits is equivalent. What
+  remains is taste.
+- **Deferred:** the house conventions (duplication cap, loop forms, when a goto is clearer),
+  defined once, later. Per-project special cases as profile data, not code forks.
+- **Deferred with them:** the SNES `.c` cutover, triage of the gate rejects, the
+  `passes/structure` move, `native_decompile`, the NES decompiler's 32-bit ext ops and shift
+  clobber, and the 3 red `cfg_gate` NA1 subs.
 
 ## Per-project revisits (after the toolset is complete; one session each)
 
