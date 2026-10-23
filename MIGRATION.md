@@ -84,7 +84,7 @@ The **oracle** is how the fold is proven to change nothing.
 | C | 6502 CPU emulation ✅ | koei-nes `koeivm/cpu6502` · game-annotation Mappy `trace_codegraph.TracingCPU` (the 18 missing opcodes) · (ro3k `emulator_rotk` and koei_vm's VM runner are VM-level, row F) | `cpu/m6502/cpu` | nestest golden log + na1's `test-cpu6502` / `test-dispatcher` / value-oracle, ro3k income test, Mappy trace + render |
 | D | **Native floor** (enumerate + name the kernel under the VM) | 7 NES forks (gk, na2, rot3k2, bk, GemFire, LEmp, UW) · koei-snes `native_floor` | `vm/koei/native_floor`, profile-driven | each title's current output, all 7 |
 | E | **Cross-title matchers** | ro3k `handler_match`, `bc_match` (gk has a verbatim copy), `native_match` · GemFire `multi_oracle` | `vm/koei/match` | same match tables |
-| F | **KOEI VM toolchain** (F1, F2, SNES half ✅) | koei-nes `koeivm/*` + `koei_vm.py` · koei-snes `vm_*` · na1 `vm_assemble`, `vm-roundtrip`, `analyze-vm-opcodes`, `classify-handlers`, `gen-opcode-appendix`, `vm-opcode-labels` · wrappers: ro3k `vm_disasm_rotk`, `vm_decompile_rotk`, na1 `na1dream` alias, UW `disasm_fixed_bytecode` · opcode tables: `vm-opcodes-v2.toml`, `vm_opcode_names.toml` · retired candidate: game-annotation `vm-disasm` | `vm/koei` + `machines/{nes,snes}` syscall bindings | every title's decompiled C byte-identical |
+| F | **KOEI VM toolchain** ✅ | koei-nes `koeivm/*` + `koei_vm.py` · koei-snes `vm_*` · na1 `vm_assemble`, `vm-roundtrip`, `analyze-vm-opcodes`, `classify-handlers`, `gen-opcode-appendix`, `vm-opcode-labels` · wrappers: ro3k `vm_disasm_rotk`, `vm_decompile_rotk`, na1 `na1dream` alias, UW `disasm_fixed_bytecode` · opcode tables: `vm-opcodes-v2.toml`, `vm_opcode_names.toml` · retired candidate: game-annotation `vm-disasm` | `vm/koei` + `machines/{nes,snes}` syscall bindings | every title's decompiled C byte-identical |
 | G | **DREAM structuring** + its gates | koei-nes `dream.py` (1,918) · koei-snes `vm_struct` (159) · snes-decompiler `native_decompile` (602, a port) · gates: `cfg_gate`, `stack_audit`, na1 `detect-prop-clobber`, `v2-corpus`, `value-oracle` | `passes/structure` over a shared IR | decompiled C byte-identical; na1 V2 corpus |
 | H | Call graphs | bk `bank_callgraph` · GemFire `call_hierarchy` · UW `call_graph` · mappy `call_graph` · na1 `native-call-index`, `driver-call-index` · koei-snes `vm_callgraph` · snes-decompiler `native_callgraph` · rot3k2 `bank_hierarchy`, `native_bytecode_called` | `passes/callgraph` | identical edge sets |
 | I | Walk ordering (leaves first) | bk `walk_order` · UW `walk_bank` · ro3k `bc_layers` · na1 `bank-ground-order`, `cluster-anon-subs` · koei-snes `gen_layers` | `walk/order` | identical worklists |
@@ -152,7 +152,9 @@ to prove it fails.
    - ✅ **F1b:** NA1's file paths resolve through the title profile, and per-title data stays per
      title.
    - ✅ **F2:** NES vs SNES opcode tables measured; 12 NES decoder lengths and the 512K fixed bank fixed.
-   - **F3:** separate the NES host binding; fold the wrappers (ro3k, na1, UW).
+   - ✅ **SNES half:** substrate, koei-snes, one opcode table.
+   - ✅ **F3:** two hosts over one ISA (`vm/koei/nes` + `vm/koei/snes`); encoder + round trip in the
+     engine; ro3k / UW wrappers onto the driver; stack effects measured. **Row F closed.**
 
    See "Row F1 done" below.
 6. **G: DREAM.** Three implementations at very different maturity; needs an IR contract. Last.
@@ -715,6 +717,72 @@ the per-title tables) remain host and profile data: `vm/koei/games.toml` (NES) a
 `vm/koei/snes/games.toml` (SNES), two profile schemas. **Still in F:** F3 (separate the NES host
 binding: `nobunaga_vm` + its `Memory`; fold the ro3k / na1 / UW wrappers) and one profile schema.
 
+## Row F3 done, and row F closed (2026-10-23)
+
+**The shape: two hosts over one instruction set.**
+- `vm/koei/` holds what both share: `isa.py` plus `vm_opcode_names.toml` (the one opcode table),
+  and `minitoml`.
+- `vm/koei/nes/` holds the 6502 host and its pipeline: the banked bus (`cpu6502.Memory`), the VM
+  runner (`nobunaga_vm`), `vm_disasm`, `vm_assemble`, `vm_decompile` with
+  CFG / V2 / DREAM / stack model, `cli`, `gates`, and `titles` + `games.toml`.
+- `vm/koei/snes/` holds the 65C816 host.
+- `core/alias` now maps an old name to several packages, and the old name is its own proxy
+  package, so `from koeivm import vm_cfg` finds a module that moved to `nes`.
+- NES + SNES runs after the split: 889/889 and 439/439 identical, every caller still using the
+  old names.
+
+**Folded into the engine:**
+- **NA1's `vm_assemble` (the encoder) and `vm-roundtrip` (the Rung-1 gate)** are now
+  `nes/vm_assemble` and `nes/gates/roundtrip`. NA1 keeps aliases, and the outputs are identical.
+  - The engine's own `stack_audit` gate had imported the encoder from NA1's tools folder; it now
+    runs from any folder.
+  - The round trip takes `--game`, through `titles.bank_view` (the one bank setup the disassembler
+    and gate share). The encoder hardcoded NA1's `20 23 E8` prologue; now it uses each title's
+    stub, and the ext-op widths from the table.
+  - **All 9 NES titles round-trip clean: 6,649 subs, 770,185 bytes.**
+  - Measured limit: the pre-F2 `$B7 $0C`–`$13` widths also round-trip clean, because the misread
+    bytes re-encode as themselves. So the round trip proves encode/decode consistency, not
+    lengths; the handler probe proves lengths. The encoder's docstring claimed otherwise and is
+    corrected.
+- **ro3k's `vm_disasm_rotk` / `vm_decompile_rotk`** are now thin CLIs over the driver, and
+  `emulator_rotk`'s `RotkVM` takes its dispatcher, ROM and labels from the `[ro3k]` profile. It had
+  reached into na1-decompiler by absolute path and monkeypatched the label path.
+  - `emulator_rotk` and `probe_gold`: byte-identical.
+  - The old wrappers vs the driver on all 8 code banks: the listing banner named the NA1 ROM and
+    NA1's label count, and the C used NA1's ext-op handler addresses (`ext_op_F569` where ROTK's
+    is `$FBFA`), NA1's province fields, and unnamed syscalls. Everything else was identical.
+- **UW's `disasm_fixed_bytecode`** worked around the fixed-bank bug F2 fixed, and is now a thin
+  command over the driver, with output equal to it. Its blind `$Axxx` → `$Cxxx` address rewrite had
+  also changed 5 immediate operands in bank 62.
+- **game-annotation's `tools/vm-disasm.py`** (NA1's original VM disassembler, driven by the old
+  wrong-length spec, referenced by nothing) is retired with `git rm`.
+
+**Stack effects, measured** (`tools/koei_isa_census.py --effects`): NES `vm_stack_effect` (audited
+on the NES handlers) vs the SNES lift templates (checked on the SNES handlers). 188 agree; the rest
+were run on all 9 NES cartridges:
+- `$B6`/`$B9` signed div/mod leave regR = |divisor|. The NES table had it kept, because its audit
+  saw only positive divisors. Corrected.
+- `$BD`–`$BF` shifts clobber regR's low byte to `$FF` on the NES, while the SNES handlers keep
+  regC. That is a real host difference, kept in the NES layer.
+
+**Decisions:**
+- **Profiles stay per host:** `nes/games.toml` and `snes/games.toml`. Their keys do not overlap
+  (dispatcher / handler tables / bank windows vs resource archive / JSL ABI / header title /
+  fetch helpers), so one schema would add structure without adding a check. The per-revision
+  exceptions are profile data on both sides (`syscall_kind`, `vm_entry_stub`, `bankcall_fn`, the
+  ext-op tables, NA1's certified folds; the shift clobber, `$B2`, and the dead slots in the NES
+  layer).
+- **Title-specific tools stay in their title:** NA1's `analyze-vm-opcodes`, `classify-handlers`,
+  `gen-opcode-appendix`, `vm-opcode-labels`.
+- `nes/vm-opcodes-v2.toml` stays as the NES-dialect notes (names, descriptions; `stack_audit` can
+  annotate it). Nothing decodes from it.
+
+**For row G:**
+- The NES `vm_decompile` and the SNES `vm_lift` are two lifters, and DREAM and `vm_struct` are two
+  structurers.
+- The NES decompiler does not yet model the 32-bit ext ops, or NES shifts clobbering regR.
+- `cfg_gate`'s three NA1-fold subs are red (since before graduation).
+
 ## Per-project revisits (after the toolset is complete; one session each)
 
 Chris, 2026-10-23: "focus on the task of creating the toolset ... have each revisit in its own
@@ -746,6 +814,7 @@ finished toolset, not just the items below.
 | gk, ro3k, na2, rot3k2, GemFire, LEmp, UW | Committed bytecode listings and C mis-decode `$B7 $0C`–`$13` (251 uses): operand bytes shown as `UNK` / `op_EB` / `op_FF`, sometimes fake `trigger_syscall_EB_FE` and phantom arguments (ro3k bank 3). A regeneration fixes them. | row F2 |
 | UW-decompile | Other banks' committed listings tag calls into the fixed `$C000` bank `{native}`/`{bytecode}` from the wrong bytes (the 16K-bank-15 fixed-region bug in the generic driver). The committed bank 62/63 listings and C read the right bytes: UW made them with its own `disasm_fixed_bytecode` workaround. (Corrected 2026-10-23: an earlier version of this row said they decode banks 30/31.) That workaround's address rewrite also changed 5 immediate operands in `bank62_C000_library.asm` (`$A418` printed as `$C418`); a regeneration with the driver fixes them. | rows F2/F3 |
 | ro3k-decompiler | Committed `2-asm-vm` / `4-c` came from the old `vm_disasm_rotk` / `vm_decompile_rotk`: banner names the NA1 ROM, the C uses NA1's ext-op addresses and province field names and unnamed syscalls. A regeneration with the driver (the wrappers now run it) fixes them. | row F3 |
+| na1-decompiler | `nobunaga/vm-opcodes.toml` is a legacy opcode table (the old spec's lengths) still read by `analyze-vm-opcodes` / `gen-opcode-appendix`; point them at the shared table and retire it. | row F3 |
 
 ## Open questions (Chris)
 
