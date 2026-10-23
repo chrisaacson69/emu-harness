@@ -36,7 +36,7 @@ import sys
 from collections import Counter
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-from emu_harness.machines.snes.mapper import cpu_to_file, strip_copier_header, LOROM  # noqa: E402
+from emu_harness.machines.snes.mapper import cpu_to_file, strip_copier_header  # noqa: E402
 from emu_harness.vm.koei.snes import archive  # noqa: E402
 from emu_harness.vm.koei.snes import profile as _profile  # noqa: E402
 from emu_harness.vm.koei.snes import vm_isa as ISA  # noqa: E402
@@ -266,7 +266,7 @@ def module_from_args(rom, P, a):
     if a.module:
         return archive.module(rom, P, a.module)
     sb, so = a.start.split(":")
-    off = cpu_to_file(LOROM, int(sb, 16), int(so, 16))
+    off = cpu_to_file(_profile.mapping(P), int(sb, 16), int(so, 16))
     m = archive.module_at(rom, P, off)
     if m is None:
         raise SystemExit("--start %s is not inside a code module of the %s archive" % (a.start, P.get("title")))

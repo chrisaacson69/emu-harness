@@ -18,7 +18,7 @@ import argparse
 import os
 import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
-from emu_harness.machines.snes.mapper import cpu_to_file, strip_copier_header, LOROM  # noqa: E402
+from emu_harness.machines.snes.mapper import cpu_to_file, strip_copier_header  # noqa: E402
 from emu_harness.vm.koei.snes import listing  # noqa: E402
 from emu_harness.vm.koei.snes import profile as _profile  # noqa: E402
 from emu_harness.vm.koei.snes import vm_isa as ISA  # noqa: E402
@@ -39,7 +39,7 @@ def main(argv):
     S = Symbols(a.syms, profile=P)
     isa = ISA.bind(rom, P)
     b, o = a.start.split(":")
-    off0 = cpu_to_file(LOROM, int(b, 16), int(o, 16))
+    off0 = cpu_to_file(_profile.mapping(P), int(b, 16), int(o, 16))
     if a.base:
         _vb, v = a.base.split(":")
         v0 = int(v, 16)

@@ -93,12 +93,23 @@ def header_title(rom, mapping="lorom"):
     return bytes(rom[o:o + 21]).decode("ascii", "replace").rstrip(" \x00")
 
 
+def mapping(P):
+    """The cart's memory mapping (machines.snes.mapper: "lorom" / "hirom" / "exhirom"): the profile's
+    `mapping`, else LoROM. check_rom holds it to the ROM header, so it is never silently assumed."""
+    return P.get("mapping", "lorom")
+
+
 def check_rom(rom, P):
-    """Raise ProfileError unless `rom` is the title profile P describes (header title + size)."""
+    """Raise ProfileError unless `rom` is the title profile P describes (header title, size, mapping)."""
+    from emu_harness.machines.snes.header import detect
+    _score, f = detect(rom)
+    if f is not None and f["mapping_guess"] != mapping(P):
+        raise ProfileError("profile %r maps the ROM as %s but its header says %s -- set `mapping` in games.toml"
+                           % (P.get("game"), mapping(P), f["mapping_guess"]))
     want = P.get("header_title")
     if want is None:
         raise ProfileError("profile %r has no header_title to check the ROM against" % P.get("game"))
-    got = header_title(rom, P.get("mapping", "lorom"))
+    got = header_title(rom, mapping(P))
     if got != want:
         raise ProfileError("profile %r is %r but the ROM header title is %r -- wrong --game / $%s?"
                            % (P.get("game"), want, got, ENV))
@@ -119,7 +130,7 @@ def select(game=None, rom=None, quiet=False):
     elif rom is not None:
         games = _read_all()
         hits = [P for P in games.values()
-                if P.get("header_title") == header_title(rom, P.get("mapping", "lorom"))]
+                if P.get("header_title") == header_title(rom, mapping(P))]
         if len(hits) != 1:
             raise ProfileError("no --game / $%s given and %d profiles match the ROM header title %r "
                                "(games.toml has: %s)" % (ENV, len(hits), header_title(rom), ", ".join(games)))

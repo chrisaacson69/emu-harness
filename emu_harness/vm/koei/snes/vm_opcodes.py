@@ -48,7 +48,7 @@ import sys
 from collections import namedtuple
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-from emu_harness.machines.snes.mapper import cpu_to_file, strip_copier_header, LOROM  # noqa: E402
+from emu_harness.machines.snes.mapper import cpu_to_file, strip_copier_header  # noqa: E402
 from emu_harness.cpu.w65c816 import isa as w65c816  # noqa: E402
 from emu_harness.vm.koei.snes import profile as _profile  # noqa: E402
 
@@ -105,17 +105,18 @@ def loop_addrs(P):
 class Deriver:
     def __init__(self, rom, P):
         self.rom, self.P = rom, P
+        self.m = _profile.mapping(P)
         self.loop = loop_addrs(P)
         self.roles = set()           # (operand offset, role) seen while analysing one handler
 
     def ro(self, a):
         if 0x8000 <= a <= 0xFFFF:
-            f = cpu_to_file(LOROM, 0, a)
+            f = cpu_to_file(self.m, 0, a)
             return f if f < len(self.rom) else None
         return None
 
     def word(self, a):
-        f = cpu_to_file(LOROM, 0, a)
+        f = cpu_to_file(self.m, 0, a)
         return self.rom[f] | (self.rom[f + 1] << 8)
 
     # -- the all-paths abstract executor ----------------------------------------------

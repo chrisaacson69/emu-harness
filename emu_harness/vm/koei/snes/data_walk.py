@@ -11,6 +11,7 @@ import argparse
 import os
 import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
+from emu_harness.machines.snes.header import detect
 from emu_harness.machines.snes.mapper import cpu_to_file, strip_copier_header, LOROM
 from emu_harness.passes.strings import slug_plain as slug   # row L: the shared name stems
 
@@ -21,7 +22,8 @@ def main(argv):
     ap.add_argument("--len", required=True); ap.add_argument("--min", type=int, default=4)
     a = ap.parse_args(argv[1:])
     rom, _ = strip_copier_header(open(a.rom, "rb").read())
-    sb, so = a.start.split(":"); off0 = cpu_to_file(LOROM, int(sb, 16), int(so, 16))
+    _score, f = detect(rom)                                     # the cart's mapping, from its header
+    sb, so = a.start.split(":"); off0 = cpu_to_file(f["mapping_guess"] if f else LOROM, int(sb, 16), int(so, 16))
     vb, vo = a.base.split(":"); vaddr0 = int(vo, 16)
     ln = int(a.len, 16)
     seen = set()

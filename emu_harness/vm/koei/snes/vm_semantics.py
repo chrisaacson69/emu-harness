@@ -19,7 +19,7 @@ W=$12-$15; FP=$04; scratch pointer $00-$02; PC=$06-$08; operand stack via PHA/PL
     py -3 tools/vm_semantics.py "<rom>.sfc" [--game g] --op B0   # detail one
 """
 import argparse, os, sys
-from emu_harness.machines.snes.mapper import cpu_to_file, strip_copier_header, LOROM  # noqa: E402
+from emu_harness.machines.snes.mapper import cpu_to_file, strip_copier_header  # noqa: E402
 from emu_harness.cpu.w65c816 import isa as w65c816  # noqa: E402
 from emu_harness.vm.koei.snes import profile as _profile  # noqa: E402
 from emu_harness.vm.koei.snes import vm_isa as ISA  # noqa: E402
@@ -33,10 +33,10 @@ PUSH = {"PHA", "PHX", "PHY"}
 POP = {"PLA", "PLX", "PLY"}
 
 
-def fingerprint(rom, handler, loop, fetch, cap=120):
+def fingerprint(rom, handler, loop, fetch, mapping, cap=120):
     def ro(a):
         if a >= 0x8000:
-            f = cpu_to_file(LOROM, 0, a)
+            f = cpu_to_file(mapping, 0, a)
             return f if f < len(rom) else None
         return None
     seen = set(); st = [(handler, False, False)]
@@ -96,7 +96,7 @@ def main(argv):
         t = ISA.TABLE.primary.get(i)
         if d["cls"] == "dead":
             print("%02X  $%04X  (dead: BRK)" % (i, h)); continue
-        fp = fingerprint(rom, h, loop, fetch)
+        fp = fingerprint(rom, h, loop, fetch, _profile.mapping(P))
         stk = "+%d-%d" % (fp["push"], fp["pop"])
         size = "var" if d["cls"] == "switch" else "/".join(str(s) for s in d["sizes"])
         print("%02X  $%04X  %-4s %-6s %-7s r:%-14s w:%-14s %-16s %s" % (

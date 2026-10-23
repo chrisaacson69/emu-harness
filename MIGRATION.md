@@ -92,7 +92,7 @@ The **oracle** is how the fold is proven to change nothing.
 | K | Data xref | na1 `data-xref`, `rom-xref` · koei-nes `data_xref` · mappy `var_xref` · rot3k2 `table_frontier` · koei-snes `data_walk` | `passes/xref` | identical xref reports |
 | L | Strings | bk + GemFire `pure_strings` (verbatim) · bk `ref_strings` · rot3k2 `extract_strings`, `strdump` · UW `dump_strings` · koei-snes `strings_snes` · na1 `ui-strings` | `passes/strings`; text encoding in the profile | identical string dumps |
 | M | Records / data dumps | koei-nes `dump_data` ~ ro3k `dump_data` (0.45) · bk `dump_records` · UW `dump_records`, `field_census` · koei-nes `RECORD_SCHEMAS.md` | `passes/records` | identical dumps |
-| N | **Address model** (ROM offset ↔ CPU address, banks) ✅ NES half | UW `prg.py` ("PRG offset is the label identity") · koei_vm `game_cfg` ROM resolver · snes-decompiler `mapper`, `header_parse` | `machines/{nes,snes}/address` | self-tests + every title resolves the same |
+| N | **Address model** (ROM offset ↔ CPU address, banks) ✅ | UW `prg.py` ("PRG offset is the label identity") · koei_vm `game_cfg` ROM resolver · snes-decompiler `mapper`, `header_parse` | `machines/{nes,snes}/address` | self-tests + every title resolves the same |
 | O | Rendering + asset decode | nes-render · koei-nes `assets/*`, `chr_extract` · na1 `render-*` (17) · mappy `render_level` | `machines/nes/ppu` (generic); KOEI formats in `vm/koei/assets` | identical PNGs |
 | P | Live emulator work | emu-harness backends · na1 `tools/lua/*` (13), `capture-test`, `mesen-dump`, `run-effect` · mappy `demo_in_real_game` · UW `trace_boot` | `backends/mesen` (+ probes); game Lua stays in the game | same SRAM / trace from same inputs |
 | Q | Trace decoding | na1 `combat-trace-decode`, `extract-chr-from-trace`, `title-nametable` · emu-harness `trace_diff` | `machines/nes/trace` | identical reconstructions |
@@ -146,7 +146,8 @@ to prove it fails.
    copies folded, nes-disasm6 a plugin. See "Row B done" below. ✅ **N (NES half) done
    2026-10-23**: one bank-window model, 11 copies folded, `window_check` for the revisits. See "Row N
    done" below. ✅ **C done 2026-10-23**: one complete 6502 core, verified on nestest. See "Row C
-   done" below.
+   done" below. ✅ **N (SNES half) done, row N closed 2026-10-23**: one mapper, and the cart mapping
+   as a checked profile fact. See "Row N closed" below.
 5. **F: the KOEI VM**: koei-nes + koei-snes → `vm/koei` + two bindings. The largest move.
    Phased:
    - ✅ **F1 2026-10-23:** koei-nes's VM package moves into `emu_harness.vm.koei`, with aliases.
@@ -865,6 +866,27 @@ banks at `$8000`.
   bank 13). UW's 555-sub inventory and its "106 jumptable-recovered" figure need recounting.
 - **The 4 remaining same-byte collisions** (na2 x3, UW x1) are each a label at a CPU address its
   bank never runs at (`$A056` in a `$8000` bank, and so on): wrong-window duplicates.
+
+## Row N closed: the SNES half (2026-10-23)
+
+Most of it happened in row F: `mapper` and `header_parse` became `machines/snes/{mapper, header}`,
+and every SNES tool reaches ROM through them (no hand-rolled LoROM math anywhere). The SNES
+analogue of NES bank windows (WRAM modules, resident and co-resident) has one implementation,
+`vm_walk.Space` plus the archive reader, which row H2 built on.
+
+**The one gap was an unchecked assumption.**
+- **What it was:** ten koei-snes VM modules passed `LOROM` as a constant (`archive`, `native_floor`,
+  `syscall_probe`, `vm_disasm`, `vm_opcodes`, `vm_semantics`, `vm_walk`, `data_walk`, …). True
+  for rot3k2, GemFire and AeroBiz, but NA1-SNES's header says **HiROM**. It runs the native tools,
+  which already read the header; a HiROM title on the VM tools would have read every address wrong
+  without an error.
+- **Now:** `profile.mapping(P)` is the cart mapping (the profile's `mapping`, else LoROM), and
+  `check_rom` holds it to the ROM header. A planted `mapping = "hirom"` for rot3k2 is refused:
+  "profile 'rot3k2' maps the ROM as hirom but its header says lorom". Every former `LOROM` site
+  takes it from the profile; `data_walk`, which runs without a profile, takes it from the header.
+- **SNES run:** 437 of 439 outputs identical. The two others are the expected refusals for the
+  non-bytecode modules (`native`, `cbmdata1`), whose traceback line number moved (row J added lines
+  to `vm_callgraph.py`).
 
 ## Row N done, NES half: one window model (2026-10-23)
 

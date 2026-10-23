@@ -22,7 +22,7 @@ import sys
 from collections import namedtuple
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-from emu_harness.machines.snes.mapper import cpu_to_file, strip_copier_header, LOROM  # noqa: E402
+from emu_harness.machines.snes.mapper import cpu_to_file, strip_copier_header  # noqa: E402
 from emu_harness.vm.koei.snes import profile as _prof  # noqa: E402
 
 ROW_BYTES = 16
@@ -43,7 +43,7 @@ def read_directory(rom, P):
         a = dir_addr + ROW_BYTES * i
         if a + ROW_BYTES > 0x10000:
             raise ArchiveError("archive at $00:%04X: no all-zero terminator row before the bank end" % dir_addr)
-        o = cpu_to_file(LOROM, 0, a)
+        o = cpu_to_file(_prof.mapping(P), 0, a)
         e = bytes(rom[o:o + ROW_BYTES])
         if not any(e):
             return rows
@@ -54,7 +54,7 @@ def read_directory(rom, P):
         bank = e[8] | (e[9] << 8)
         addr = e[10] | (e[11] << 8)
         length = e[12] | (e[13] << 8) | (e[14] << 16) | (e[15] << 24)
-        rows.append(Row(i, name.decode("ascii"), bank, addr, length, cpu_to_file(LOROM, bank, addr), a))
+        rows.append(Row(i, name.decode("ascii"), bank, addr, length, cpu_to_file(_prof.mapping(P), bank, addr), a))
         i += 1
 
 

@@ -18,7 +18,7 @@ import os
 import sys
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-from emu_harness.machines.snes.mapper import cpu_to_file, strip_copier_header, LOROM       # noqa: E402
+from emu_harness.machines.snes.mapper import cpu_to_file, strip_copier_header       # noqa: E402
 from emu_harness.machines.snes.header import detect                                   # noqa: E402
 from emu_harness.cpu.w65c816 import isa as w65c816  # noqa: E402
 from emu_harness.machines.snes import regs as snes_regs  # noqa: E402
@@ -34,14 +34,14 @@ JUMP = {"JMP", "JML"}
 COND = {"BPL", "BMI", "BVC", "BVS", "BCC", "BCS", "BNE", "BEQ"}
 
 
-def rom_off(rom, bank, addr):
+def rom_off(rom, bank, addr, m):
     if (bank & 0x7F) <= 0x7D and addr >= 0x8000:
-        f = cpu_to_file(LOROM, bank, addr)
+        f = cpu_to_file(m, bank, addr)
         return f if f < len(rom) else None
     return None
 
 
-def probe(rom, bank, addr, m8=False, x8=False, max_insns=1200, max_depth=1):
+def probe(rom, bank, addr, mapping, m8=False, x8=False, max_insns=1200, max_depth=1):
     visited, regs, subs, callees = set(), {}, {}, set()
     count = [0]
     stack = [(bank, addr, m8, x8, 0)]
@@ -52,7 +52,7 @@ def probe(rom, bank, addr, m8=False, x8=False, max_insns=1200, max_depth=1):
             if key in visited:
                 break
             visited.add(key)
-            foff = rom_off(rom, b, a)
+            foff = rom_off(rom, b, a, mapping)
             if foff is None or count[0] >= max_insns:
                 break
             ins, mm, xx = w65c816.decode(rom, foff, b, a, mm, xx)
@@ -114,7 +114,7 @@ def main(argv):
         print("-" * 92)
     for i in ids:
         h = entries[i]
-        regs, subs, callees, n = probe(rom, 0x00, h)
+        regs, subs, callees, n = probe(rom, 0x00, h, _profile.mapping(P))
         subline = " ".join("%s:%d" % (s, c) for s, c in sorted(subs.items(), key=lambda kv: -kv[1]))
         wr = [r for r, k in sorted(regs.items()) if "W" in k or "M" in k]
         rd = [r for r, k in sorted(regs.items()) if k == {"R"}]
