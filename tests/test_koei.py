@@ -137,3 +137,15 @@ def test_vocabulary_is_well_formed():
         anchors.append(r["anchor"]); names.append(r["name"])
     assert len(set(anchors)) == len(anchors) and len(set(names)) == len(names)
     assert all(c.get("members") and c.get("why") for c in voc.get("conflict", []))
+
+
+def test_dataxref_kinds_come_from_the_lift_templates():
+    """vm/koei/nes/dataxref (row K): $A7 ldC.b is a byte READ (na1's table called it address-of), $A8 /
+    $A9 are stores, the $8A/$8C/$8E i16 moves are pointers, and an i16 arithmetic constant is not."""
+    from emu_harness.vm.koei.isa import TABLE
+    from emu_harness.vm.koei.nes.dataxref import kind_of
+    k = lambda code: kind_of(TABLE.op(code))
+    assert [k(c) for c in (0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xA9, 0xAA, 0xAB)] == \
+        ["read", "read", "read", "read", "write", "write", "read", "read"]
+    assert [k(c) for c in (0x8A, 0x8C, 0x8E)] == ["ptr"] * 3
+    assert k(0x90) is None and k(0xAF) is None and k(0xAC) is None     # addA #i16, sp_adj, a call

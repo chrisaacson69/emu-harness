@@ -542,6 +542,66 @@ write + regen step needs each title's source layout (`source/4-c/bank_NN.c`, `so
 `src/<MODULE>.c` …). That is profile data no title declares yet; it belongs with the source-ladder
 revisit.
 
+## Row K done: one data xref for the KOEI NES titles (2026-10-23)
+
+**Three tools, two methods.**
+- **koei-nes `data_xref`** called itself the title-agnostic version of NA1's pair, but it grepped the
+  decompiled C for hex literals.
+- **NA1's `data-xref` (RAM) and `rom-xref` (ROM pointers)** classify by VM operand class, which is
+  the decoded-level method rows E and H took. So the fold generalizes NA1's semantics, not
+  koei-nes's code.
+
+**Now `vm/koei/nes/dataxref.py`.** Every bank's decoded bytecode (`callgraph.TitleSpace`, lifted
+out of the call graph; all 9 call graphs identical after the lift). Each operand is classified from
+the one opcode table's lift template:
+- `a16`: a store to `{o}` is a **write**, `&{o}` outside a memory access an **address-of**,
+  otherwise a **read**;
+- an `i16` that is only moved or pushed (`8A` / `8C` / `8E`, rom-xref's own three) is a
+  **pointer**.
+
+RAM is one space. A ROM pointer is keyed by the bank that *owns* the byte (the window model);
+anything without a single owner is reported. The views are NA1's, verbatim except for these
+inputs: `refs` / `hot` / `hot --rom` from data-xref; `frontier` / `ptr-refs` / `strings` /
+`tables` / `stats` from rom-xref, with NA1's combat-geometry deferral now a `--defer` option.
+
+**What the shared table corrected in NA1's own table:**
+- `$A8` is a store. The docstring said "a LOAD here"; the code was right.
+- `$A7` is `ldC.b`, a byte **read** into regC, which NA1 classed as address-of.
+- `ADD_imm2` (`$90`) is arithmetic, not a pointer. Bank 1's `ADD_imm2 $F9E9` / bank 0's `$F9E8`
+  are −1559 / −1560, the game's year offset. They had been counted as 3–4 refs to
+  `msg_will_you_lead_them_personally`, whose one real ref is `driver_move`'s `PUSH_imm2 $F9E8`.
+
+**Oracles (NA1):**
+- data-xref: `hot` (3 forms), `refs 6FF6`, `refs daimyo_banner_chr` and `refs C537` are identical.
+- rom-xref: `strings --toml` (the data walk's emitter) and the unlabeled string frontier are
+  identical.
+- Every other difference is one of four kinds:
+  1. A `$8000-$BFFF` pointer from fixed-bank code, which rom-xref and data-xref keyed to bank 15
+     and decoded as bank 15's `$C000+` byte (17 assets, e.g. `strategic_map_chr_tiles`), is now
+     unowned: which bank it means depends on the run-time switch.
+  2. A fixed-bank asset is one row, not one per referencing bank.
+  3. Bank 10 is read (rom-xref read 0 / 1 / 2 / 15), adding `jumptab_8617`, `play_audio_by_id`'s
+     dispatch table.
+  4. Two labels on one byte give the first (the shared reader's rule).
+
+**koei-nes `data_xref` decoded the wrong bytes on 16K titles.** Its offset defaulted `bank_size`
+to 8K, and MMC1 profiles (gk, ro3k) do not set it. So bank ≥ 1 read the wrong bank: gk bank 1
+`$92BE` decoded bank 0's `"%d has become independent"`, and bank 1 `$B0C6`'s real "A major storm
+has occurred" was missed.
+- An audit of gk's 156 `msg_` names found no proof of damage. The 41 that do not match their bytes
+  are hand-named format strings and slug noise. A revisit row records it.
+- Its `strings` / `tables` / `ram` / `refs` now run on the shared module, with rom-xref's emitter;
+  the format change is named.
+
+**Moved:** NA1 `data-xref` and `rom-xref`, and koei-nes `data_xref`, are thin CLIs. The data-walk
+skill runs them on `py -3.14`.
+
+**Stays:**
+- Mappy `var_xref`: native 6502 RAM use, row R's input.
+- rot3k2 `table_frontier`: classifies table *access shapes* (jump / word / byte) from the C. A
+  candidate `tables --shape` view later.
+- koei-snes `data_walk`: SNES string scan, row L.
+
 ## Row D done: one native-floor tool (2026-10-22)
 
 **Shape.** The 7 copies were not one algorithm with per-title constants: they were 7 stages of
@@ -1195,6 +1255,7 @@ finished toolset, not just the items below.
 | ro3k-decompiler | Committed `2-asm-vm` / `4-c` came from the old `vm_disasm_rotk` / `vm_decompile_rotk`: banner names the NA1 ROM, the C uses NA1's ext-op addresses and province field names and unnamed syscalls. A regeneration with the driver (the wrappers now run it) fixes them. | row F3 |
 | na1-decompiler | `nobunaga/vm-opcodes.toml` is a legacy opcode table (the old spec's lengths) still read by `analyze-vm-opcodes` / `gen-opcode-appendix`; point them at the shared table and retire it. | row F3 |
 | na1-decompiler | 148 fixed-region (`$C000`+) names are filed under `[prg.bank0]` (e.g. `rng_mod` `$CA52`, `min_word`, `draw_message`, `cursor_nav_loop`, `nmi_off`), so bank 15's own scoped view (its listing, its C, the family report) cannot see them. Move them to `[prg.bank15]`. | row E `family` FILLs |
+| gk-decompiler | koei-nes `data_xref` read bank ≥ 1 PRG at 8K strides on this 16K cart (fixed in row K). 41 of its 89 bank ≥ 1 `msg_` names do not decode to their text at the right offset; most look hand-named (`msg_fmt_*`) — confirm none came from a wrong-offset `data_xref strings` run. | row K |
 | na1-decompiler | Before the next walk batch: regenerate `source/` (`py -3.14 tools/na1_regen.py`), since the committed C predates the engine's enum names / banner / F2 fixes (18 files change), and every batch's guard would otherwise refuse the non-rename diff. `source/4-c/all_banks.c` (the merged PRG-keyed view) has no generator since `decompile-merged.py` went; regenerate it from the shared engine, or retire it. | row J |
 | rot3k2-snes-decompiler, Gemfire-snes-decompiler | Regenerate `src/` (`gen_layers`): with the co-residency now declared, overlay calls into `comroot` / `hex` / `command` are named and `comroot` `$BBF6` is native code; the committed files predate both. | row H2 |
 | UW-decompile | `docs/10-call-graph.md` "strict layering / ZERO subsystem→subsystem edges" counted direct `CALL_abs` only; through `call_in_bank_dcd1` 34 subsystem → subsystem edges exist (`callgraph uw --indegree`). Correct the chapter. | row H |

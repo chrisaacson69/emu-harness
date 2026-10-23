@@ -77,54 +77,76 @@ def const(tok):
         return None
 
 
-def build(title, decompile=True, native=True):
-    cfg = titles.game_cfg(title)
-    win = titles.windows(cfg)
-    size = cfg.get("bank_size", 0x4000)
-    # every bank that can hold bytecode: the profile's code banks, the semi-fixed ones, and the
-    # cart's fixed banks (bk's bank 31 carries bytecode subs such as rand_mod that code_banks omits)
-    banks = list(dict.fromkeys(cfg.get("code_banks", []) + cfg.get("banks_at_c000", []) + cfg.get("banks_at_e000", [])
-                               + sorted(win.fixed())))
-    pinned = {b for b, _base in win.fixed().items()} | set(cfg.get("banks_at_c000", [])) | set(cfg.get("banks_at_e000", []))
-    views, stubs = {}, {}
-    for b in banks:
-        vm, VD, _c, base, sz, st = titles.bank_view(title, b)
-        if not st:
-            continue
-        views[b] = (vm, VD, base, sz, st)
-        stubs[b] = set(st)
-    G = Graph(title)
-    names = {}
-    for b in views:
-        labs = titles.bank_scoped_labels(cfg, b)
-        names[b] = {a: n for a, (n, _c) in labs.items()}
-        for s in stubs[b]:
-            G.subs[(b, s)] = names[b].get(s) or names[b].get(s + 5)
+class TitleSpace:
+    """A title's bytecode banks as the call graph and the data xref read them: one VM view per bank
+    with stubs (`views[bank] = (vm, vm_disasm, base, size, stubs)`), bank-scoped names, and `owner`,
+    the window model's answer to "which bank's byte is this address, seen from this bank"."""
 
-    covers = lambda c, addr: win.base(c) <= addr < win.base(c) + size
-    every = sorted(set(stubs) | set(win.fixed()) | pinned)
+    def __init__(self, title):
+        cfg = self.cfg = titles.game_cfg(title)
+        self.title = title
+        self.win = win = titles.windows(cfg)
+        self.size = cfg.get("bank_size", 0x4000)
+        # every bank that can hold bytecode: the profile's code banks, the semi-fixed ones, and the
+        # cart's fixed banks (bk's bank 31 carries bytecode subs such as rand_mod that code_banks omits)
+        banks = list(dict.fromkeys(cfg.get("code_banks", []) + cfg.get("banks_at_c000", []) + cfg.get("banks_at_e000", [])
+                                   + sorted(win.fixed())))
+        self.pinned = {b for b, _base in win.fixed().items()} | set(cfg.get("banks_at_c000", [])) | set(cfg.get("banks_at_e000", []))
+        self.views, self.stubs, self.names = {}, {}, {}
+        for b in banks:
+            vm, VD, _c, base, sz, st = titles.bank_view(title, b)
+            if not st:
+                continue
+            self.views[b] = (vm, VD, base, sz, st)
+            self.stubs[b] = set(st)
+        for b in self.views:
+            self.names[b] = {a: n for a, (n, _c) in titles.bank_scoped_labels(cfg, b).items()}
+        self.every = sorted(set(self.stubs) | set(win.fixed()) | self.pinned)
 
-    def owner(src_bank, addr):
-        """-> ((bank, addr) | None, why). A bytecode target is (bank, stub); a native one (bank, entry)."""
-        if covers(src_bank, addr):
+    def covers(self, c, addr):
+        return self.win.base(c) <= addr < self.win.base(c) + self.size
+
+    def subs(self, b):
+        """[(stub, decoded instructions)] of bank b."""
+        vm, VD, base, sz, st = self.views[b]
+        bounds = st + [base + sz]
+        return [(s, VD.walk_sub(vm.mem, s + 5, bounds[i + 1], self.names[b])[0]) for i, s in enumerate(st)]
+
+    def owner(self, src_bank, addr, entry=True):
+        """-> ((bank, addr) | None, why). The caller's own window, else a pinned bank, else -- for a
+        code target (`entry`) -- the one bank with a sub stub exactly there (ties broken by
+        coresident_<bank>), else the one co-resident bank whose window covers it."""
+        if self.covers(src_bank, addr):
             return (src_bank, addr), None               # the caller's own window: only it is mapped there
-        for c in every:
-            if c in pinned or c in win.fixed():
-                if covers(c, addr):
+        for c in self.every:
+            if c in self.pinned or c in self.win.fixed():
+                if self.covers(c, addr):
                     return (c, addr), None              # a fixed / semi-fixed bank: always mapped
-        cands = [c for c in stubs if addr in stubs[c] and covers(c, addr)]   # exact sub entry
-        co = cfg.get(f"coresident_{src_bank}", [])
-        if len(cands) > 1:
-            pref = [c for c in cands if c in co]
-            cands = pref if len(pref) == 1 else cands
-        if len(cands) == 1:
-            return (cands[0], addr), None
-        if len(cands) > 1:
-            return None, "ambiguous: banks %s" % sorted(cands)
-        native = [c for c in co if covers(c, addr)]     # no stub anywhere: a native in a co-resident bank
+        co = self.cfg.get(f"coresident_{src_bank}", [])
+        if entry:
+            cands = [c for c in self.stubs if addr in self.stubs[c] and self.covers(c, addr)]   # exact sub entry
+            if len(cands) > 1:
+                pref = [c for c in cands if c in co]
+                cands = pref if len(pref) == 1 else cands
+            if len(cands) == 1:
+                return (cands[0], addr), None
+            if len(cands) > 1:
+                return None, "ambiguous: banks %s" % sorted(cands)
+        native = [c for c in co if self.covers(c, addr)]   # no stub anywhere: a co-resident bank's byte
         if len(native) == 1:
             return (native[0], addr), None
-        return None, "no stub there and no single co-resident bank covers it"
+        return None, ("no stub there and no single co-resident bank covers it" if entry
+                      else "no single co-resident bank covers it")
+
+
+def build(title, decompile=True, native=True):
+    sp = TitleSpace(title)
+    cfg, views, stubs, names = sp.cfg, sp.views, sp.stubs, sp.names
+    pinned, covers, owner = sp.pinned, sp.covers, sp.owner
+    G = Graph(title)
+    for b in views:
+        for s in stubs[b]:
+            G.subs[(b, s)] = names[b].get(s) or names[b].get(s + 5)
 
     # the natives that cross banks, by ADDRESS (from the registry), with their argument conventions
     reg = defaultdict(set)
