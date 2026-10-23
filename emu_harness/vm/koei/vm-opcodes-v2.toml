@@ -1,0 +1,667 @@
+# NOBUNAGA VM OPCODE TABLE (authoritative)
+#
+# Source: nesdev.org forum thread t=15931 (page 2 has the complete table).
+# Cross-checked against Nobunaga's $F026/$F126 dispatch table handlers.
+# Same VM is used in Koei MMC1 games (Nobunaga, Genghis Khan, RoTK, FTM)
+# and MMC5 games (Bandit Kings, L'Empereur) — VM core is identical, only
+# the syscall dispatcher differs by mapper.
+#
+# Register conventions (per nesdev architecture doc):
+#   $00     - 16-bit temporary
+#   $02     - VM stack pointer (descending, starts $05FF)
+#   $04     - VM frame pointer
+#   $06     - VM instruction pointer (PC)
+#   $08     - regL (left register, 16/32-bit, arithmetic destination)
+#   $0C     - regR (right register, 16/32-bit, arithmetic source)
+#   $10     - 32-bit temporary
+#
+# Frame layout (descending stack):
+#   fp+17/+15/+13/+11 = args 4/3/2/1
+#   fp+9/+6/+4/+2/+0  = saved IP/FP/SP/return
+#   fp-2/-4/.../-24   = locals 1..12
+
+# ======================================================================
+# QUICK GROUP ($00-$7F) — operand in low nibble (0-15)
+# ======================================================================
+
+[op_00]   # $00-$0F
+mnemonic = "LOADL_quick"
+pops = 0
+pushes = 0
+description = "regL = word at frame[fast(opcode)]; codes 0-B = locals 12..1, codes C-F = args 1..4"
+verified = true
+
+[op_10]   # $10-$1F
+mnemonic = "LOADR_quick"
+pops = 0
+pushes = 0
+description = "regR = word at frame[fast(opcode)]; codes 0-B = locals 12..1, codes C-F = args 1..4"
+verified = true
+
+[op_20]   # $20-$2F
+mnemonic = "STORE_quick"
+pops = 0
+pushes = 0
+description = "word at frame[fast(opcode)] = regL"
+verified = true
+
+[op_30]   # $30-$3F
+mnemonic = "PUSH_quick"
+pops = 0
+pushes = 1
+description = "push word at frame[fast(opcode)]"
+verified = true
+
+[op_40]   # $40-$4F
+mnemonic = "LOADL_qimm"
+pops = 0
+pushes = 0
+description = "regL = (opcode & 0x0F) — value 0..15"
+verified = true
+
+[op_50]   # $50-$5F
+mnemonic = "LOADR_qimm"
+pops = 0
+pushes = 0
+description = "regR = (opcode & 0x0F)"
+verified = true
+
+[op_60]   # $60-$6F
+mnemonic = "PUSH_qimm"
+pops = 0
+pushes = 1
+description = "push (opcode & 0x0F)"
+verified = true
+
+[op_70]   # $70-$7F
+mnemonic = "ADD_qimm"
+pops = 0
+pushes = 0
+description = "regL += (opcode & 0x0F)"
+verified = true
+
+# ======================================================================
+# WORD LOAD/STORE/PUSH ($80-$88) — near/far/imm
+# ======================================================================
+
+[op_80]
+mnemonic = "ILLEGAL"
+# audit: report-only (effect varies/unmodeled — see vm_stack_effect.py)
+verified = true
+
+[op_81]
+mnemonic = "LOADL_near"
+pops = 0
+pushes = 0
+verified = true
+description = "regL = word at frame[+signed_byte]"
+
+[op_82]
+mnemonic = "LOADL_far"
+# audit: unobserved in banks 0/1/2/15 (model unexercised)
+description = "regL = word at frame[+signed_word]"
+
+[op_83]
+mnemonic = "LOADR_near"
+pops = 0
+pushes = 0
+verified = true
+description = "regR = word at frame[+signed_byte]"
+
+[op_84]
+mnemonic = "LOADR_far"
+# audit: unobserved in banks 0/1/2/15 (model unexercised)
+description = "regR = word at frame[+signed_word]"
+
+[op_85]
+mnemonic = "STORE_near"
+pops = 0
+pushes = 0
+description = "word at frame[+signed_byte] = regL  (CONFIRMED: handler $EA61)"
+verified = true
+
+[op_86]
+mnemonic = "STORE_far"
+# audit: unobserved in banks 0/1/2/15 (model unexercised)
+description = "word at frame[+signed_word] = regL"
+
+[op_87]
+mnemonic = "PUSH_near"
+pops = 0
+pushes = 1
+verified = true
+description = "push word at frame[+signed_byte]"
+
+[op_88]
+mnemonic = "PUSH_far"
+# audit: unobserved in banks 0/1/2/15 (model unexercised)
+description = "push word at frame[+signed_word]"
+
+# ======================================================================
+# IMMEDIATES ($89-$90)
+# ======================================================================
+
+[op_89]
+mnemonic = "BYTE_LOADL_imm1"
+pops = 0
+pushes = 0
+verified = true
+description = "regL = sign-extended byte from bytecode"
+
+[op_8A]
+mnemonic = "LOADL_imm2"
+pops = 0
+pushes = 0
+verified = true
+description = "regL = word from bytecode"
+
+[op_8B]
+mnemonic = "BYTE_LOADR_imm1"
+pops = 0
+pushes = 0
+verified = true
+
+[op_8C]
+mnemonic = "LOADR_imm2"
+pops = 0
+pushes = 0
+verified = true
+description = "regR = word from bytecode"
+
+[op_8D]
+mnemonic = "BYTE_PUSH_imm1"
+pops = 0
+pushes = 1
+verified = true
+
+[op_8E]
+mnemonic = "PUSH_imm2"
+pops = 0
+pushes = 1
+verified = true
+description = "push word from bytecode"
+
+[op_8F]
+mnemonic = "BYTE_ADD_imm1"
+pops = 0
+pushes = 0
+verified = true
+description = "regL += sign-extended byte"
+
+[op_90]
+mnemonic = "ADD_imm2"
+pops = 0
+pushes = 0
+verified = true
+description = "regL += word from bytecode"
+
+# ======================================================================
+# BYTE FAR ($A0-$A3)
+# ======================================================================
+
+[op_A0]
+mnemonic = "BYTE_LOADL_far"
+pops = 0
+pushes = 0
+verified = true
+description = "regL = (byte at frame[+signed_word], zero-extended)"
+
+[op_A1]
+mnemonic = "BYTE_LOADR_far"
+# audit: unobserved in banks 0/1/2/15 (model unexercised)
+
+[op_A2]
+mnemonic = "BYTE_STORE_far"
+pops = 0
+pushes = 0
+verified = true
+description = "byte at frame[+signed_word] = regL low byte"
+
+[op_A3]
+mnemonic = "BYTE_PUSH_far"
+pops = 0
+pushes = 1
+verified = true
+
+# ======================================================================
+# ABSOLUTE ADDRESSING ($A4-$AB) — the previously-misclassified group
+# ======================================================================
+
+[op_A4]
+mnemonic = "LOADL_abs"
+pops = 0
+pushes = 0
+description = "regL = word at absolute address"
+verified = true
+
+[op_A5]
+mnemonic = "BYTE_LOADL_abs"
+pops = 0
+pushes = 0
+verified = true
+description = "regL = (byte at absolute address, zero-extended)"
+
+[op_A6]
+mnemonic = "LOADR_abs"
+pops = 0
+pushes = 0
+description = "regR = word at absolute address"
+verified = true
+
+[op_A7]
+mnemonic = "BYTE_LOADR_abs"
+# audit: report-only (effect varies/unmodeled — see vm_stack_effect.py)
+
+[op_A8]
+mnemonic = "STORE_abs"
+pops = 0
+pushes = 0
+description = "word at absolute address = regL  (THIS IS THE KEY ONE — old disasm called it loadA_mem_word, which was WRONG)"
+verified = true
+
+[op_A9]
+mnemonic = "BYTE_STORE_abs"
+pops = 0
+pushes = 0
+verified = true
+description = "byte at absolute address = regL low byte"
+
+[op_AA]
+mnemonic = "PUSH_abs"
+pops = 0
+pushes = 1
+description = "push word from absolute address"
+verified = true
+
+[op_AB]
+mnemonic = "BYTE_PUSH_abs"
+# audit: unobserved in banks 0/1/2/15 (model unexercised)
+
+# ======================================================================
+# CALL/COPY/UNSTACK ($AC-$AF)
+# ======================================================================
+
+[op_AC]
+mnemonic = "CALL_abs"
+verified = true
+# audit: CALL_abs confirmed vs emulator (call-depth +1; frame effect)
+description = "Call subroutine at absolute address"
+
+[op_AD]
+mnemonic = "COPY_imm2"
+# audit: report-only (effect varies/unmodeled — see vm_stack_effect.py)
+description = "TBD - some 2-word immediate copy"
+
+[op_AE]
+mnemonic = "UNSTACK_imm1"
+# audit: report-only (effect varies/unmodeled — see vm_stack_effect.py)
+description = "sp += byte"
+
+[op_AF]
+mnemonic = "UNSTACK_imm2"
+# audit: report-only (effect varies/unmodeled — see vm_stack_effect.py)
+description = "sp += word"
+
+# ======================================================================
+# STACK + ARITHMETIC ($B0-$BF)
+# ======================================================================
+
+[op_B0]
+mnemonic = "DEREF"
+pops = 0
+pushes = 0
+verified = true
+description = "regL = word at [regL]"
+
+[op_B1]
+mnemonic = "POPSTORE"
+pops = 1
+pushes = 0
+verified = true
+description = "regR = pop; word at [regR] = regL"
+
+[op_B2]
+mnemonic = "NOP"
+pops = 0
+pushes = 0
+verified = true
+description = "no-op (no stack/reg effect, length 1)"
+# audit: ORACLE-CONFIRMED NOP 2026-06-03 via synthetic micro-test (0 ROM occurrences;
+# vm-stack-audit.py validate_nop_b2: dSP=0, regL/regR kept, pc+1). Settles the
+# NOP-vs-PUSHL dispute — the decompiler's old PUSHL was wrong (harmless: never emitted).
+
+[op_B3]
+mnemonic = "PUSHL"
+pops = 0
+pushes = 1
+verified = true
+description = "push regL"
+
+[op_B4]
+mnemonic = "POPR"
+pops = 1
+pushes = 0
+verified = true
+description = "regR = pop"
+
+[op_B5]
+mnemonic = "MULT"
+pops = 0
+pushes = 0
+verified = true
+description = "regL *= regR"
+
+[op_B6]
+mnemonic = "SDIV"
+pops = 0
+pushes = 0
+verified = true
+description = "regL = (signed) regL / regR"
+
+[op_B7]
+mnemonic = "LONG"
+# audit: report-only (effect varies/unmodeled — see vm_stack_effect.py)
+description = "Prefix for 32-bit operations; next byte selects the 32-bit op (47 of them, see $B700-$B72F)"
+
+[op_B8]
+mnemonic = "UDIV"
+pops = 0
+pushes = 0
+verified = true
+
+[op_B9]
+mnemonic = "SMOD"
+pops = 0
+pushes = 0
+verified = true
+
+[op_BA]
+mnemonic = "UMOD"
+pops = 0
+pushes = 0
+verified = true
+
+[op_BB]
+mnemonic = "ADD"
+pops = 0
+pushes = 0
+verified = true
+description = "regL += regR"
+
+[op_BC]
+mnemonic = "SUB"
+pops = 0
+pushes = 0
+verified = true
+description = "regL -= regR"
+
+[op_BD]
+mnemonic = "LSHIFT"
+pops = 0
+pushes = 0
+verified = true
+description = "regL <<= regR"
+
+[op_BE]
+mnemonic = "URSHIFT"
+pops = 0
+pushes = 0
+verified = true
+description = "regL = (unsigned) regL >> regR"
+
+[op_BF]
+mnemonic = "SRSHIFT"
+pops = 0
+pushes = 0
+verified = true
+description = "regL = (signed) regL >> regR"
+
+# ======================================================================
+# COMPARISONS + UNARY ($C0-$CF)
+# ======================================================================
+
+[op_C0]
+mnemonic = "CMPEQ"
+pops = 0
+pushes = 0
+verified = true
+
+[op_C1]
+mnemonic = "CMPNE"
+pops = 0
+pushes = 0
+verified = true
+
+[op_C2]
+mnemonic = "SCMPLT"
+pops = 0
+pushes = 0
+verified = true
+
+[op_C3]
+mnemonic = "SCMPLE"
+pops = 0
+pushes = 0
+verified = true
+
+[op_C4]
+mnemonic = "SCMPGT"
+pops = 0
+pushes = 0
+verified = true
+
+[op_C5]
+mnemonic = "SCMPGE"
+pops = 0
+pushes = 0
+verified = true
+
+[op_C6]
+mnemonic = "UCMPLT"
+pops = 0
+pushes = 0
+verified = true
+
+[op_C7]
+mnemonic = "UCMPLE"
+pops = 0
+pushes = 0
+verified = true
+
+[op_C8]
+mnemonic = "UCMPGT"
+pops = 0
+pushes = 0
+verified = true
+
+[op_C9]
+mnemonic = "UCMPGE"
+pops = 0
+pushes = 0
+verified = true
+
+[op_CA]
+mnemonic = "NOT"
+# audit: unobserved in banks 0/1/2/15 (model unexercised)
+
+[op_CB]
+mnemonic = "MINUS"
+pops = 0
+pushes = 0
+verified = true
+description = "regL = -regL"
+
+[op_CC]
+mnemonic = "COMPL"
+# audit: report-only (effect varies/unmodeled — see vm_stack_effect.py)
+description = "regL = ~regL"
+
+[op_CD]
+mnemonic = "SWAP"
+pops = 0
+pushes = 0
+verified = true
+
+[op_CE]
+mnemonic = "ILLEGAL"
+# audit: report-only (effect varies/unmodeled — see vm_stack_effect.py)
+
+[op_CF]
+mnemonic = "RETURN"
+verified = true
+# audit: RETURN confirmed vs emulator (call-depth -1; frame effect)
+description = "VM subroutine return; restore caller IP/FP/SP from frame"
+
+# ======================================================================
+# INC/DEC/JUMPS ($D0-$DF)
+# ======================================================================
+
+[op_D0]
+mnemonic = "INC"
+pops = 0
+pushes = 0
+verified = true
+
+[op_D1]
+mnemonic = "DEC"
+pops = 0
+pushes = 0
+verified = true
+
+[op_D2]
+mnemonic = "LSHIFT1"
+pops = 0
+pushes = 0
+verified = true
+description = "regL <<= 1"
+
+[op_D3]
+mnemonic = "BYTE_DEREF"
+pops = 0
+pushes = 0
+verified = true
+description = "regL = byte at [regL], zero-extended"
+
+[op_D4]
+mnemonic = "BYTE_POPSTORE"
+pops = 1
+pushes = 0
+description = "regR = pop; byte at [regR] = regL low byte  (this is what writes $6FF4/$6FF5)"
+verified = true
+
+[op_D5]
+mnemonic = "SWITCH_contiguous"
+pops = 0
+pushes = 0
+verified = true
+
+[op_D6]
+mnemonic = "JUMP_abs"
+pops = 0
+pushes = 0
+verified = true
+
+[op_D7]
+mnemonic = "JUMPT_abs"
+pops = 0
+pushes = 0
+description = "If regL != 0: PC = abs"
+verified = true
+
+[op_D8]
+mnemonic = "JUMPF_abs"
+pops = 0
+pushes = 0
+description = "If regL == 0: PC = abs"
+verified = true
+
+[op_D9]
+mnemonic = "SWITCH_noncontiguous"
+pops = 0
+pushes = 0
+verified = true
+
+[op_DA]
+mnemonic = "AND"
+pops = 0
+pushes = 0
+verified = true
+
+[op_DB]
+mnemonic = "OR"
+pops = 0
+pushes = 0
+verified = true
+
+[op_DC]
+mnemonic = "XOR"
+pops = 0
+pushes = 0
+verified = true
+
+[op_DD]
+mnemonic = "CALLPTR"
+verified = true
+# audit: CALLPTR confirmed vs emulator (call-depth +1; frame effect)
+
+[op_DE]
+mnemonic = "LEAL_far"
+pops = 0
+pushes = 0
+verified = true
+description = "regL = address of frame[+signed_word]"
+
+[op_DF]
+mnemonic = "LEAR_far"
+# audit: unobserved in banks 0/1/2/15 (model unexercised)
+
+# ======================================================================
+# BITFIELD + REL JUMPS + CALL ($E0-$EA)
+# ======================================================================
+
+[op_E0]
+mnemonic = "SLOADBF"
+# audit: report-only (effect varies/unmodeled — see vm_stack_effect.py)
+
+[op_E1]
+mnemonic = "ULOADBF"
+# audit: report-only (effect varies/unmodeled — see vm_stack_effect.py)
+
+[op_E2]
+mnemonic = "STOREBF"
+# audit: report-only (effect varies/unmodeled — see vm_stack_effect.py)
+
+[op_E3]
+mnemonic = "JUMP_back"
+# audit: unobserved in banks 0/1/2/15 (model unexercised)
+
+[op_E4]
+mnemonic = "JUMPT_back"
+# audit: unobserved in banks 0/1/2/15 (model unexercised)
+
+[op_E5]
+mnemonic = "JUMPF_back"
+# audit: unobserved in banks 0/1/2/15 (model unexercised)
+
+[op_E6]
+mnemonic = "JUMP_ahead"
+# audit: unobserved in banks 0/1/2/15 (model unexercised)
+
+[op_E7]
+mnemonic = "JUMPT_ahead"
+# audit: unobserved in banks 0/1/2/15 (model unexercised)
+
+[op_E8]
+mnemonic = "JUMPF_ahead"
+# audit: unobserved in banks 0/1/2/15 (model unexercised)
+
+[op_E9]
+mnemonic = "CALL_abs_imm1"
+# audit: CALL_abs_imm1 confirmed vs emulator (call-depth +1; frame effect)
+description = "Call abs; sp -= byte after return (the 'host_call' pattern with adj byte)"
+verified = true
+
+[op_EA]
+mnemonic = "CALLPTR_imm1"
+verified = true
+# audit: CALLPTR_imm1 confirmed vs emulator (call-depth +1; frame effect)

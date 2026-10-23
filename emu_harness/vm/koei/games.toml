@@ -1,0 +1,438 @@
+# koei-nes — per-title VM retarget registry
+#
+# The KOEI NES VM is ~217/219 opcodes byte-identical across titles, and the emulator/disassembler
+# step the ROM's OWN interpreter — so bringing up a new title is NOT a fork, it's a few addresses.
+# Each [game] block is everything the shared toolchain (koei_vm.py) needs to retarget.
+#
+# `repo` is the sibling decompiler repo (cloned next to koei-nes/ and na1-decompiler/); the ROM lives
+# at <repo>/<rom>. The VM interpreter core is currently imported from na1dream (na1-decompiler) — see
+# koei_vm.py; that core is the eventual relocation target into koei-nes.
+
+[na1]
+title          = "Nobunaga's Ambition"
+repo           = "na1-decompiler/nobunaga"
+rom            = "Nobunaga's Ambition (USA).nes"
+labels         = "mesen-labels.toml"
+vm_entry       = 0xE823          # JSR vm_entry stub target
+vm_entry_stub  = "20 23 E8"      # the 3 bytes a bytecode sub's $8003 begins with
+dispatcher     = 0xE867          # per-opcode fetch top (handlers jmp back here) -- emulator DISPATCHER_ADDR
+handler_lo     = 0xF026          # 256-byte opcode handler LO table
+handler_hi     = 0xF126
+syscall_kind   = "jsr3"          # BIOS dispatch: JSR into a 3-byte JMP table
+syscall_table  = 0xC173
+code_banks     = [0, 1, 2, 10, 14, 15]
+
+[ro3k]
+title          = "Romance of the Three Kingdoms"
+repo           = "ro3k-decompiler"
+rom            = "Romance_of_the_Three_Kingdoms_(USA).nes"
+labels         = "mesen-labels.toml"
+vm_entry       = 0xEEB4
+vm_entry_stub  = "20 B4 EE"
+dispatcher     = 0xEEF8          # verified: 75 handlers `jmp $EEF8`
+handler_lo     = 0xF6B7
+handler_hi     = 0xF7B7
+syscall_kind   = "brk2"          # BIOS dispatch: BRK -> $C13F -> 2-byte address table
+syscall_table  = 0xC16E
+extop_dispatch = 0xF8D7          # the $B7 32-bit-math ext-op sub-dispatcher
+extop_table    = 0xF8F2
+code_banks     = [0, 1, 2, 3, 10, 12, 13, 15]
+
+[gk]
+title          = "Genghis Khan"
+repo           = "gk-decompiler"
+rom            = "Genghis Khan (USA).nes"
+labels         = "mesen-labels.toml"
+vm_entry       = 0xEF85          # JSR target at every bytecode bank's $8003
+vm_entry_stub  = "20 85 ef"
+dispatcher     = 0xEFC9          # 75 handler jmp-backs (= vm_entry+0x44, the family offset)
+handler_lo     = 0xF788          # 256-byte opcode handler LO table
+handler_hi     = 0xF888
+syscall_kind   = "jsr3"          # BIOS dispatch follows NA1 (3-byte JMP table), NOT ROTK's brk2
+syscall_table  = 0xC185
+extop_dispatch = 0xF9A8          # the $B7 32-bit-math ext-op sub-dispatcher (fetches ip, indexes extop_table)
+extop_table    = 0xF9C3          # ext-op handler address table (asl index)
+code_banks     = [0, 1, 2, 3, 4, 5, 6, 10, 13, 15]   # bytecode banks; 15 = fixed bank's OS/library band (163 subs)
+
+[na2]
+title          = "Nobunaga's Ambition II"
+repo           = "na2-decompiler"
+rom            = "Nobunaga's Ambition II (USA).nes"
+labels         = "mesen-labels.toml"
+# --- FIRST FORMAT BREAK in the family: MMC5, not MMC1 (see na2-decompiler/docs/00-fixed-region-recon.md) ---
+mapper         = 5               # MMC5 (prior 3 titles = MMC1)
+chr            = "rom"           # 128K CHR-ROM (prior 3 = CHR-RAM); ROM file = 393232 B, NES 2.0 header
+bank_size      = 0x2000          # *** 8K paged banks (MMC1 titles paged 16K) ***
+bank_base      = 0xA000          # DEFAULT bytecode window = $A000-$BFFF (MMC5 $5115). The "app-logic" banks live here.
+banks_at_8000  = [1, 2, 9, 12, 14, 16]   # PER-BANK OVERRIDE: these are $8000-linked "shared library" banks (resident at $5114 while an app bank rotates through $A000). Determined by own-call-window (operand&0x1FFF hits own subs).
+banks_at_c000  = [30]                     # bank 30 ($C000-$DFFF, the semi-fixed lower bank) holds the SHARED LIBRARY: bytecode subs + native record/string/UI helpers that all bytecode banks call (the true leaves).
+fixed_section  = "prg.bank31"   # MMC5 fixed region ($E000-$FFFF + semi-fixed bank30) -> own scope; frees [prg.bank15] for the ACTUAL bank 15 (battle-resolution/ending bytecode)
+# CO-RESIDENT HINT: bank N is loaded alongside these banks (in another window), so it calls them via direct
+# CALL_abs (no farcall, no bank operand) -- assuming that loadout. A *hint*: it encodes the steady-state
+# assumption the code itself makes. Merged into bank N's label scope so those calls resolve to names.
+# coresident_8=[9]: battle keeps the engine (bank9 @ $8000) + command layer (bank8 @ $A000) resident together.
+coresident_8   = [9]
+coresident_11  = [9]   # bank 11 (battle strength/flow, $A000) is co-resident with the battle engine (bank9 @ $8000)
+coresident_10  = [9]   # bank 10 (battle controller/player commands, $A000) co-resident with the engine (bank9 @ $8000)
+coresident_14  = [15]  # bank 14 (conquest/endings, $8000) co-resident with bank 15 (ending-cutscene bytecode @ $A000, mapped via set_prg_bank 239)
+fixed_region   = [0xE000, 0xFFFF]   # MMC5 pins last 8K (bank 31); bank 30 @ $C000 effectively fixed too
+reset          = 0xF500          # RESET vector (prior 3 = $C000); NMI=$F641, IRQ/BRK=$FF34 (bare RTI)
+os_entry       = 0xE10C          # OS main; itself bytecode (jsr $E414 + inline operands)
+vm_entry       = 0xE414          # JSR vm_entry stub target
+vm_entry_stub  = "20 14 e4"      # the 3 bytes after each bytecode bank's $8000 JMP header
+dispatcher     = 0xE458          # = vm_entry + 0x44 (family-invariant offset); handlers jmp back here
+handler_lo     = 0xEC29          # 256-byte opcode handler LO table
+handler_hi     = 0xED29          # = handler_lo + 0x100
+syscall_kind   = "fakebrk_priv"  # fake-BRK (PHP + JMP indirect) like NA1, but via a PRIVATE vector ($FFF8), decoupled from the real IRQ/BRK ($FFFE=bare RTI). Raw 2-byte addr table (ROTK-style stride, not NA1's 3-byte JMP)
+syscall_vector = 0xFFF8          # indirect jmp slot; ($FFF8) = $F8E7
+syscall_dispatch = 0xF8E7        # reads id @ $50, asl, index table, jmp ($0068); central return $F90A
+syscall_table  = 0xF911          # 31 slots (NA1 had 23), handlers $FA2A-$FE72. Table RENUMBERED vs NA1 (only id0=reset matches): NA1 fns survive at new slots (id9 set_sprite,10 palette_write,12 rng,13 palette_swap,14 wait_nmi,15 read_ctrl,18 scroll) + ~7 new MMC5 (1 nt/exram,3 set_prg,4 get_prg,5 chr,6 exram,11 fill) ; 19-21=RTS stubs, 22=scroll_vsplit; 23-30=audio/v-split/gfx. Full map: na2-decompiler mesen-labels.toml + docs/00
+syscall_entry_struct = 0xEE29    # NA1 $F226 analog: 22-byte param copy from ($02) to $0050+, fake-BRK
+syscall_entry_simple = 0xEE49    # lightweight: syscall id in A
+code_banks     = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16]   # *** 8K bank numbers *** (bytecode; 13/15/17-29=data/native, 30-31=fixed)
+
+[rot3k2]
+title          = "Romance of the Three Kingdoms II"
+repo           = "rot3k2-decompiler"
+rom            = "Romance of the Three Kingdoms II (USA).nes"
+labels         = "mesen-labels.toml"
+# --- KOEI game 5 (Nov 1990); MMC5, NA2's sibling -- NOT a 2nd format break (see rot3k2-decompiler/docs/00-recon.md) ---
+mapper         = 5               # MMC5, like NA2 (ROTK1/GK were MMC1)
+chr            = "rom"           # *** 256K CHR-ROM -- DOUBLE NA2's 128K (first 256K-CHR title); ROM file = 524304 B, NES 2.0 ***
+bank_size      = 0x2000          # 8K paged banks (MMC5), like NA2
+bank_base      = 0xA000          # DEFAULT bytecode window = $A000-$BFFF ($5115); VERIFIED on bank 0 (JMP $A401 + stub)
+fixed_region   = [0xE000, 0xFFFF]   # MMC5 pins last 8K (bank 31); bank 30 @ $C000 effectively fixed too
+fixed_section  = "prg.bank31"    # fixed-region label scope (frees [prg.bank15] for the real bank 15)
+reset          = 0xF500          # RESET (== NA2); NMI=$F671, IRQ/BRK=$FF66 (bare RTI -- HW IRQ ignored, like NA2)
+os_entry       = 0xE0EA          # OS main; itself bytecode (jmp $E000 -> $E0EA = jsr $E4D1 + inline operands)
+vm_entry       = 0xE4D1          # JSR vm_entry stub target (frame-save fingerprint verified)
+vm_entry_stub  = "20 d1 e4"      # the 3 bytes after each bytecode bank's window-JMP header
+dispatcher     = 0xE515          # = vm_entry + 0x44 (family-invariant offset HOLDS); handlers jmp back here
+handler_lo     = 0xECE6          # 256-byte opcode handler LO table (verified in dispatcher: LDA $ECE6,X)
+handler_hi     = 0xEDE6          # = handler_lo + 0x100 (LDA $EDE6,X)
+# --- Window map VERIFIED 2026-06-30 (own-stub-hitting CALL test): app-logic=$A000, shared-lib=$8000 ---
+banks_at_8000  = [1, 8, 13, 15, 17, 18]   # $8000-linked shared-library banks (co-resident under $A000 app banks); banks 2,3 confirmed $A000
+banks_at_c000  = [30]                      # bank 30 ($C000-$DFFF) semi-fixed shared-lib band (like NA2)
+code_banks     = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 17, 18, 21]   # 8K banks w/ "20 d1 e4" stub (excl. fixed 30/31); 14/16/19/20/22-29 = data/native
+# SYSCALL MECHANISM (resolved 2026-06-30 via the native-floor residue read): fake-BRK via a PRIVATE
+# vector like NA2, but at $FFDE (NOT $FFF8 -- that word is $FFFF here). Real IRQ/BRK ($FFFE=$FF66)=bare RTI.
+syscall_kind   = "fakebrk_priv"  # invokers (e.g. $EF06,$DCB9,$DD6C) set id in $50, push fake return, jmp ($FFDE)
+syscall_vector = 0xFFDE          # ($FFDE) = $F91A
+syscall_dispatch = 0xF91A        # save A/X/Y, clear $66/$67, id=$50 asl -> index table, jmp ($0068); central return $F93D
+syscall_table  = 0xF944          # raw 2-byte address entries (addr encoding, like NA2)
+bankcall_fn    = "call_in_bank"  # cross-bank trampoline $F412 (vs NA1/NA2 call_in_bank_dcd1); decompiler auto-resolves call_in_bank(window,bank,addr,args) -> <target>(args)
+extop_dispatch = 0xEF18          # the $B7 32-bit-math ext-op sub-dispatcher: fetch subcode, index extop_table, jmp ($00) -> $E514
+extop_table    = 0xEF33          # ext-op handler address table (asl index)
+suppress_default_nops = 1        # opcodes $EB-$FF -> default handler (jmp dispatcher) = VM no-op slots; render as nop
+# Co-resident hints (MMC5 keeps an $8000 lib + an $A000 app mapped together; merges the partner's labels
+# into a bank's decompile scope so direct CALL_abs resolves). BATTLE GROUP: bank 8 ($8000 command/action
+# layer) is co-resident with each $A000 engine bank 9/10/11/12 (one at a time); they call bank 8 via CALL_abs $80xx.
+coresident_9   = [8]
+coresident_10  = [8]
+coresident_11  = [8]
+coresident_12  = [8]
+# STRATEGIC GROUP: bank 1 ($8000 turn-loop/command lib) co-resident w/ each $A000 app bank
+coresident_2   = [1]
+coresident_3   = [1]
+coresident_4   = [1]
+coresident_5   = [1]
+coresident_6   = [1]
+coresident_7   = [1]
+coresident_21  = [1]
+coresident_13  = [14]   # bank 13 (world-turn lib) draws event strings from data bank 14
+coresident_15  = [16, 14] # bank 15 (conquest lib) draws UI strings from data banks 16/14
+
+[bk]
+title          = "Bandit Kings of Ancient China"
+repo           = "bk-decompiler"
+rom            = "Bandit Kings of Ancient China (USA).nes"
+labels         = "mesen-labels.toml"
+# --- KOEI game 6 (US 1990; Famicom "Suikoden: Tenmei no Chikai", 1989). The CLOSEST NA2 sibling yet:
+#     byte-for-byte the same ROM shape as NA2 (MMC5, 256K PRG, 128K CHR-ROM, 393232 B) AND the same
+#     $FFF8 private-vector syscall — see bk-decompiler/docs/00-recon.md. ---
+mapper         = 5               # MMC5, like NA2/rot3k2 (ROTK1/GK were MMC1)
+chr            = "rom"           # 128K CHR-ROM (== NA2; rot3k2 was 256K); ROM file = 393232 B, NES 2.0
+bank_size      = 0x2000          # 8K paged banks (MMC5)
+bank_base      = 0xA000          # DEFAULT bytecode window = $A000-$BFFF ($5115)
+banks_at_8000  = [0, 1, 9, 12, 14, 26]   # $8000-linked shared-library banks (own-window JMP $8xxx)
+banks_at_c000  = [30]                     # bank 30 ($C000-$DFFF) semi-fixed shared-lib band (like NA2/rot3k2)
+banks_at_e000  = [31]                     # bank 31 ($E000-$FFFF) fixed upper 8K = OS-bytecode bank (disasm at $E000 base, not $A000)
+coresident_2   = [9]                       # bank 2 ($A000 command lib) calls bank 9 ($8000) subs -- exact-entry match on all 7 cross-window targets (walk_order gap)
+coresident_10  = [9]                       # bank 10 ($A000 battle UI/controller) co-resident with the bank 9 battle engine ($8000)
+coresident_11  = [9]                       # bank 11 ($A000 battle UI/controller) co-resident with the bank 9 battle engine ($8000)
+coresident_8   = [1]                       # bank 8 ($A000) calls bank 1 ($8000) subs $9A50/$9A76 (2 targets; walk_order gap)
+coresident_12  = [13]                      # bank 12 ($8000 post-battle aftermath lib) calls bank 13 ($A000 tactical-battle bank) -- 12/12 exact-entry match (walk_order gap)
+coresident_13  = [12]                      # ...and reciprocally: bank 13 calls bank 12 $9E51 (mutually resident during a tactical battle)
+coresident_14  = [15]                      # bank 14 ($8000 world-event/conquest lib) calls bank 15 ($A000 ending-cutscene bytecode) -- 5/5 exact-entry match (walk_order gap)
+coresident_15  = [14]                      # ...and reciprocally: bank 15 calls bank 14 $833D (mutually resident)
+fixed_region   = [0xE000, 0xFFFF]   # MMC5 pins last 8K (bank 31); bank 30 @ $C000 effectively fixed too
+fixed_section  = "prg.bank31"    # fixed-region label scope (frees [prg.bank15] for the real bank 15)
+reset          = 0xF500          # RESET (== NA2/rot3k2); NMI=$F641 (byte-identical to NA2); IRQ/BRK=$FFD6 (bare RTI)
+os_entry       = 0xE0E6          # OS main; itself bytecode (jmp $E000 -> $E0E6 = jsr vm_entry + inline operands)
+vm_entry       = 0xE42A          # JSR vm_entry stub target (frame-pull fingerprint verified)
+vm_entry_stub  = "20 2a e4"      # the 3 bytes after each bytecode bank's window-JMP header
+dispatcher     = 0xE46E          # = vm_entry + 0x44 (family-invariant offset HOLDS); handlers jmp back here
+handler_lo     = 0xEC3F          # 256-byte opcode handler LO table (verified in dispatcher: LDA $EC3F,X)
+handler_hi     = 0xED3F          # = handler_lo + 0x100 (LDA $ED3F,X)
+# SYSCALL MECHANISM (NA2-style fake-BRK via a PRIVATE vector $FFF8; rot3k2 moved it to $FFDE).
+# Real IRQ/BRK ($FFFE=$FFD6)=bare RTI. Invoker $EE3F: 22-byte param copy ($02)->$004E, then jmp ($FFF8) @ $EE52.
+syscall_kind   = "fakebrk_priv"
+syscall_vector = 0xFFF8          # ($FFF8) = $F8ED
+syscall_dispatch = 0xF8ED        # save A/X/Y, clear $66/$67, id=$50 asl -> index table, jmp ($0068); central return $F911
+syscall_table  = 0xF917          # raw 2-byte address entries (addr encoding, like NA2); id0=reset $F500
+syscall_entry_struct = 0xEE3F    # NA2 $EE29 analog: 22-byte param copy from ($02) to $004E+, fake-BRK
+extop_dispatch = 0xEE71          # the $B7 32-bit-math ext-op sub-dispatcher (fetch subcode, index extop_table, jmp)
+extop_table    = 0xEE8C          # ext-op handler address table (asl index)
+bankcall_fn    = "call_in_bank"  # cross-bank trampoline $C118 (== NA2 $DCD1); decompiler resolves call_in_bank(window,bank,addr,args) -> <target>(args)
+code_banks     = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 16, 26, 31]   # 8K banks w/ "20 2a e4" stub (excl. fixed 30; 13/15/17-25/27-29 = data/native)
+
+[gemfire]
+title          = "Gemfire"
+repo           = "GemFire-decompiler"
+rom            = "Gemfire (USA).nes"
+labels         = "mesen-labels.toml"
+# --- KOEI game 7 (US 1992; Famicom "Royal Blood", 1991) -- KOEI's FANTASY turn (off the historical-sim
+#     track). ROM shape = rot3k2's TWIN: MMC5, 256K PRG / 256K CHR-ROM, 524304 B, NES 2.0, battery.
+#     See GemFire-decompiler/docs/00-recon.md. ---
+mapper         = 5               # MMC5, like na2/rot3k2/bk (ROTK1/GK were MMC1)
+chr            = "rom"           # 256K CHR-ROM (== rot3k2; na2/bk were 128K); ROM file = 524304 B, NES 2.0
+bank_size      = 0x2000          # 8K paged banks (MMC5)
+bank_base      = 0xA000          # DEFAULT bytecode window = $A000-$BFFF ($5115); verified on $A000-linked banks 5/6/7/10/11
+fixed_region   = [0xC000, 0xFFFF]  # MMC5 pins last 16K (banks 30+31); VM CORE straddles both (lower than rot3k2/bk)
+fixed_section  = "prg.bank31"    # fixed-region label scope (frees [prg.bank15] for the real bank 15)
+reset          = 0xF500          # RESET (== na2/rot3k2/bk); reset chain ends JMP $C000 -> OS main
+# NMI = $F60C ; IRQ/BRK = $FE9C (bare RTI -- HW IRQ ignored, family-standard)
+os_entry       = 0xC15E          # OS main; reached via reset JMP $C000 -> JMP $C15E; itself bytecode (jsr vm_entry + inline operands)
+vm_entry       = 0xDFAA          # JSR vm_entry stub target (frame-save fingerprint verified: PLA->$08/$09,$00/$01; ($02)-9; copy $00-$07)
+vm_entry_stub  = "20 aa df"      # the 3 bytes after each bytecode bank's window-JMP header
+dispatcher     = 0xDFEE          # = vm_entry + 0x44 (family-invariant offset HOLDS); handlers jmp back here
+handler_lo     = 0xE7BF          # 256-byte opcode handler LO table (verified in dispatcher: LDA $E7BF,X)
+handler_hi     = 0xE8BF          # = handler_lo + 0x100 (LDA $E8BF,X)
+# SYSCALL MECHANISM = rot3k2's exact engine, relocated +2: fake-BRK via PRIVATE vector $FFDE.
+# Real IRQ/BRK ($FFFE=$FE9C)=bare RTI. Dispatcher saves A/X/Y, clears $66/$67, pushes central-return $F93F, id=$50 asl -> table.
+syscall_kind   = "fakebrk_priv"
+syscall_vector = 0xFFDE          # ($FFDE) = $F91C
+syscall_dispatch = 0xF91C        # save A/X/Y, clear $66/$67, id=$50 asl -> index table, jmp ($0070); central return $F93F
+syscall_table  = 0xF946          # raw 2-byte address entries (addr encoding, like na2/rot3k2); 28 slots (id0-27; id0=$F500 reset). RENUMBERED vs rot3k2/na2 (31)
+extop_dispatch = 0xE9F1          # opcode $B7 handler: the $B7 32-bit-math ext-op sub-dispatcher (asl id, index extop_table, jmp($00) back to vm_dispatch)
+extop_table    = 0xEA0C          # ext-op handler address table (asl index); ext_mul32/div32/mod32/neg32/add32/sub32/... (rot3k2 $EF33 analog)
+bankcall_fn    = "call_in_bank"  # cross-bank trampoline $F098 (bytecode-called native; surfaced in the walk). decompiler auto-resolves call_in_bank(window,bank,addr,args) -> <target>(args)
+# CO-RESIDENCY (determined 2026-07-02 via tools/call_hierarchy.py: an $A000 app bank's cross-window
+# CALL_abs $8xxx lands in exactly one $8000 lib bank). Merges the lib's labels into the app's scope.
+# COMMAND cluster: apps 5/6/7 <-> lib bank 4 (strategic command lib). COMBAT cluster: apps 10/11 <-> lib bank 9.
+coresident_5   = [4]
+coresident_6   = [4]
+coresident_7   = [4]
+coresident_10  = [9]
+coresident_11  = [9]
+banks_at_8000  = [0, 1, 4, 8, 9, 12, 14, 16, 19]   # $8000-linked shared-library banks (own-window JMP $8xxx + stub); 19 = the record/name data bank, read through window 1 = $8000 (call_in_bank WINDOW param; GemFire pure_strings, MEMORY_MAP)
+banks_at_c000  = [30]                           # bank 30 = fixed OS-bytecode + VM-core bank (JMP $C15E OS main)
+code_banks     = [0, 1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 16, 30]   # 8K banks w/ "20 aa df" stub; 2/3 = own-call test pending; 18-26 = JMP-$0000-guard data; 31 = fixed native
+# NATIVE FLOOR walked 2026-07-02 (tools/native_floor.py, oracle=rot3k2): 310 fixed-region native subs, 224 relocated-identical (>=.90),
+# 14 near, 68 Gemfire-specific residue. Bytecode engine COMPLETE (219 opcodes, default handler $E72B). VM opcode set + 32-bit ALU + math floor
+# all reused from rot3k2. OPEN: 65-sub residue read + syscall-handler read (renumbered); bank 2/3 nature; bankcall trampoline; co-resident pairs.
+
+[lemp]
+title          = "L'Empereur"
+repo           = "LEmp-decompiler"
+rom            = "Empereur, L' (USA).nes"
+labels         = "mesen-labels.toml"           # not yet generated (recon 2026-07-02)
+# --- KOEI game 8, last NES conquest sim. NA2/BK MMC5 sub-family (128K CHR, 393232 B); base title = NA2 (reset match 49/64 vs BK 25/64). See LEmp-decompiler/docs/00-recon.md ---
+mapper         = 5               # MMC5 (header byte-identical to NA2/BK)
+chr            = "rom"           # 128K CHR-ROM (NA2/BK flavor, NOT rot3k2/gemfire's 256K)
+bank_size      = 0x2000          # *** 8K paged banks (like NA2) ***
+bank_base      = 0xA000          # DEFAULT bytecode window $A000-$BFFF (JMP $A003 majority)
+banks_at_8000  = [1, 10, 15, 16, 17]   # $8000-resident (MAJORITY self-call window). Rest live @ $A000.
+# CO-RESIDENT $8000 LIBRARIES (direct CALL_abs into the $8000 window, NOT trampolined -- a distinct call
+# method the trampoline scan misses; disasm mis-tags these paged-window targets as {native}). Two shared
+# $8000 libs: bank 1 serves the main app cluster (banks 2-9), bank 10 serves banks 11/12/14. coresident_N
+# pulls the partner's labels into bank N's scope so those $8xxx calls resolve.
+coresident_2  = [1]
+coresident_3  = [1]
+coresident_4  = [1]
+coresident_5  = [1]
+coresident_6  = [1]
+coresident_7  = [1]
+coresident_8  = [1]
+coresident_9  = [1]
+coresident_11 = [10]
+coresident_12 = [10]
+coresident_13 = [10]
+coresident_14 = [10]
+banks_at_c000  = [30]            # bank 30 @ $C000-$DFFF (semi-fixed lower bank: bytecode OS/UI lib interleaved w/ native)
+banks_at_e000  = [31]            # bank 31 @ $E000-$FFFF (true fixed bank: native VM engine + OS-main bytecode $E17D)
+fixed_region   = [0xE000, 0xFFFF]   # MMC5 pins last 8K (bank 31); bank 30 @ $C000 effectively fixed
+fixed_section  = "prg.bank31"    # fixed-region label scope = bank 31 ($E000-$FFFF), like NA2; frees [prg.bank15] for the actual bank 15 bytecode
+reset          = 0xF500          # RESET (shared w/ NA2/BK); NMI=$F64C, IRQ/BRK=$FF47
+os_entry       = 0xE17D          # OS main; itself bytecode ($E17D = JSR $E509 + inline operands). $E000 = JMP $E17D
+vm_entry       = 0xE509          # JSR vm_entry stub target (census: 19 banks, mode)
+vm_entry_stub  = "20 09 e5"      # the 3 bytes after each bytecode bank's paged JMP header
+dispatcher     = 0xE54D          # = vm_entry + 0x44 (family-invariant offset HOLDS); handlers jmp back here
+handler_lo     = 0xED1E          # 256-byte opcode handler LO table
+handler_hi     = 0xEE1E          # = handler_lo + 0x100
+# SYSCALL (RESOLVED 2026-07-02): fake-BRK like NA2, but the PRIVATE vector RELOCATED to $FFDE (GemFire-aligned),
+# NOT NA2/BK's $FFF8 (=$0000 here). ENGINE-vs-CONFIG: cartridge=NA2/BK-family, but syscall subsystem=GemFire-era.
+syscall_kind   = "fakebrk_priv"  # fake-BRK (PHP + JMP indirect); raw 2-byte addr table (ROTK-style), id0=$F500 reset
+syscall_vector = 0xFFDE          # indirect jmp slot; ($FFDE) = $F961 dispatcher. ($FFF8)=$0000 (NA2/BK slot unused)
+syscall_dispatch = 0xF961        # save AXY; lda id @ $50, asl, index $F98B, jmp ($006F); central return $F984 -> rti
+syscall_table  = 0xF98B          # 27 slots (id0=$F500 reset; NA2 had 31, GemFire 28). Handlers $FA8F-$FF3A. Renumbered vs NA2.
+syscall_entry_struct = 0xEF1E    # NA2 $EE29 analog: 22-byte param copy ($02)->$004E+, fake-BRK, $66/67->$08/09 return
+syscall_entry_simple = 0xEF3E    # NA2 $EE49 analog: syscall id in A
+extop_dispatch = 0xEF50          # $B7 ext-op (32-bit math) sub-dispatcher: fetch inline byte, index table, jmp handler
+extop_table    = 0xEF6B          # ext-op handler address table (2-byte entries)
+code_banks     = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]   # 8K bytecode banks. Bank 13 (added 2026-07-04): its bank-entry header is a JSR $E2E3 native trampoline, but it holds 42 standard $E509 command subs that decompile cleanly -- was wrongly excluded as an "anomaly". (JSR $E2E3 is NOT a 2nd bytecode entry: it is a native-6502 CALL convention -- the prologue builds a VM frame then jmps to native code at stub+6, which RTSes back into the VM. 46 such native helpers sit in banks 0/1/2/8/9/10/12/14, correctly tagged {native}.) 18-29 = data/native; 30-31 = fixed.
+
+# Shared ZP VM registers (identical across titles seen): vm_sp=$02, vm_fp=$04, vm_ip=$06.
+# To add a title: clone its <repo> as a sibling, find vm_entry ($8003's JSR target) + the dispatcher
+# (where opcode handlers jmp back), drop a block here, and the whole toolchain works -- no code fork.
+
+[uw]
+title          = "Uncharted Waters"
+repo           = "UW-decompile"
+rom            = "Uncharted Waters (USA).nes"
+labels         = "mesen-labels.toml"           # 1,373 labels; valid TOML except repeated sections (see emu-harness MIGRATION.md row A2)
+# --- KOEI game 9, the FIRST GENRE BREAK: exploration/trade/piracy sim w/ real-time interaction, NOT a
+#     turn-based conquest sim. And the BIGGEST CART yet -- the first 512K-PRG title (all 8 prior = 256K).
+#     Engine base = L'Empereur (game 8): NMI $F64C byte-identical, $FFDE private syscall vector, jmp($006F)
+#     dispatch. See UW-decompile/docs/00-recon.md. ---
+mapper         = 5               # MMC5 (NA2/BK/LEmp 128K-CHR sub-family)
+chr            = "rom"           # 128K CHR-ROM (== NA2/BK/LEmp; rot3k2/gemfire were 256K)
+# *** FIRST 512K-PRG TITLE: 64x8K banks (all prior titles = 256K = 32x8K). ROM file = 655376 B, NES 2.0, battery ***
+prg_512k       = 1
+bank_size      = 0x2000          # 8K paged banks (MMC5)
+bank_base      = 0xA000          # default; but UW is INVERTED vs the family -- $8000 is the rotating CODE window, $A000 is the resident shared lib (bank 1). Only banks 1/25 default here.
+# WINDOW MAP RESOLVED (ch.8, own-call test + header JMP + 704-call cross-window match): $8000 = the rotating
+# subsystem code window; $A000 = bank 1 (the UNIVERSAL co-resident shared library, called by 21+ banks).
+banks_at_8000  = [0, 2, 3, 4, 5, 6, 8, 9, 11, 12, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 26, 27, 28, 29, 30, 35, 36, 37, 38]
+# $A000 banks: 1 = shared library (co-resident with EVERY $8000 code bank); 25 = standalone subsystem (royal-audience).
+# CO-RESIDENCY (ch.8): every $8000 code bank runs with bank 1 @ $A000 -> its CALL $Axxx = bank 1. No bank switch.
+# So calls resolve: CALL $8xxx=own bank | CALL $Axxx=bank 1 | CALL $Cxxx/$Dxxx=bank 62 | CALL $Exxx/$Fxxx=bank 63/natives.
+coresident_0=[1]
+coresident_2=[1]
+coresident_5=[1]
+coresident_8=[1]
+coresident_9=[1]
+coresident_11=[1]
+coresident_12=[1]
+coresident_14=[1]
+coresident_15=[1]
+coresident_16=[1]
+coresident_17=[1]
+coresident_18=[1]
+coresident_19=[1]
+coresident_20=[1]
+coresident_21=[1]
+coresident_22=[1]
+coresident_23=[1]
+coresident_24=[1]
+coresident_25=[1,26]
+coresident_26=[1]
+coresident_27=[1]
+coresident_28=[1]
+coresident_29=[1]
+coresident_30=[1]
+coresident_35=[1]
+coresident_36=[1]
+coresident_37=[1]
+coresident_38=[1]
+# SUBSYSTEM MAP (ch.4/12-15): 2=title/new-game 4=quality/item-names(native) 20=market/trade 21=ship-stats
+# 22=shipyard 23=tavern(info-hub) 24=quest/event-dialogue 25=royal-court(titles) 26=crew/royal 27=poker 28=blackjack
+# 30=fleet-mgmt ; REAL-TIME SAILING (ch.15): 16=HELM(steer/dock/debark/battle) 8=ENGINE(movement+at-sea events) 29=voyage-PREP
+# DATA: 57=player-ship/protagonist 58=names/ports(56)/ships/items(31) 20=26 goods 4=procedural item-names 60=world-map tiles
+# VERIFIED via boot banking-init $F53D: $5116<-$FE masks to bank 62 (512K=64-bank ROM, &0x3F); $5117=$FF->bank 63.
+# Resident fixed 16K = banks 62(@$C000)+63(@$E000) = the file's LAST 16K (family "2nd-last + last" arch,
+# renumbered for 64 banks; NOT bank 30 -- that was a naive 32-bank copy). $5114<-$E0->bank32, $5115<-$E1->bank33 (boot only, re-paged).
+banks_at_c000  = [62]            # bank 62 @ $C000-$DFFF semi-fixed shared-lib band (header JMP $CDF7, $E299 native-trampoline stubs)
+# NOTE: bank 63 ($E000-$FFFF fixed OS-bytecode: os_main $E003 + 6 subs) does NOT get a banks_at_e000 entry --
+# the koeivm emulator maps disasm banks only into $8000/$A000/$C000 paged slots, so base $E000 reads 0 stubs.
+# Disassemble bank 63 at the default $A000 base; the CONTENT is bank 63's real bytes, addresses are +$4000
+# (shown $A0xx = real $E0xx). The 6 OS subs: $E003 os_main, $E06F,$E08C,$E0C1,$E0D6,$E0EA (all native-called).
+fixed_region   = [0xC000, 0xFFFF]   # MMC5 resident 16K = bank 62 @ $C000 + bank 63 @ $E000 (last 16K of file)
+fixed_section  = "prg.bank63"    # fixed-region label scope = bank 63 ($E000-$FFFF); frees [prg.bank15] for actual bytecode
+reset          = 0xF500          # RESET (family MMC5 standard); NMI=$F64C (== L'Empereur), IRQ/BRK=$FF3E (bare RTI)
+os_entry       = 0xE003          # OS main; itself bytecode ($E000 = JMP $E003 = JSR vm_entry + inline operands)
+vm_entry       = 0xE4BF          # JSR vm_entry stub target (family frame-save fingerprint verified: PLA->$08/$09,$00/$01; ($02)-9; copy $00-$07)
+vm_entry_stub  = "20 bf e4"      # the 3 bytes after each bytecode bank's window-JMP header (29 banks)
+dispatcher     = 0xE503          # = vm_entry + 0x44 (FAMILY-INVARIANT OFFSET HOLDS for a 9th title); handlers jmp back here
+handler_lo     = 0xECD4          # 256-byte opcode handler LO table (verified in dispatcher: LDA $ECD4,X -> $00)
+handler_hi     = 0xEDD4          # = handler_lo + 0x100 (LDA $EDD4,X -> $01; JMP ($0000))
+# default handler = $EC40 (37 of 256 slots = VM no-op) ; native-CALL trampoline entry = $E299 (8 banks: 3,4,6,7,8,10,13,62)
+# SYSCALL: fake-BRK via PRIVATE vector $FFDE (L'Empereur/GemFire-aligned, NOT NA2/BK's $FFF8=$FFFF here).
+# Real IRQ/BRK ($FFFE=$FF3E)=bare RTI. Engine = L'Empereur's, relocated +1.
+syscall_kind   = "fakebrk_priv"  # save AXY, clear $66/$67, push central return $F985, id=$50 asl -> table, jmp ($006F)
+syscall_vector = 0xFFDE          # ($FFDE) = $F962 dispatcher. ($FFF8)=$FFFF (NA2/BK slot unused)
+syscall_dispatch = 0xF962        # save AXY; lda id @ $50, asl, index $F98C, jmp ($006F); central return $F985
+syscall_table  = 0xF98C          # raw 2-byte address entries (family addr encoding); id0=$F500 reset. 27 slots (id0-26): reset, id1-6 MMC5 nt/prg/chr/sprite, id7-10 vram/blit, id11-15 fill/chr/metasprite/ppu, id16-18 ctrl/wait/scroll, id19-26 vsplit/audio. Full labels in UW mesen-labels.toml [prg.bank63].
+syscall_entry_struct = 0xEED4    # na2 $EE29 analog: bytecode CALLs this native trampoline with the syscall id as 1st arg; copies 22 param bytes ($02)->$50+, then fake-BRK ($FFDE). resolve_syscall_entry_calls rewrites `syscall_entry_struct(9,..)` -> the id's handler name (call-by-name, not number).
+extop_dispatch = 0xEF06          # opcode $B7 handler: 32-bit-math ext-op sub-dispatcher (fetch subcode, asl, index table, jmp)
+extop_table    = 0xEF21          # ext-op handler address table (2-byte entries; verified LDA $EF21,X / LDA $EF22,X)
+# --- NATIVE-CALL CONVENTION (ch.2): two inline-operand bridges couple the VM and native code layers ---
+native_call    = 0xE299          # VM->native "inline asm call": build VM frame, JMP($0008) to code after 3
+                                 # inline bytes (argcount + 16-bit frame), native RTS -> $E311 teardown. A native
+                                 # sub = `JSR $E299` + 3 inline + body @ stub+6 (native analog of the 20-bf-e4 stub).
+native_call_stub = "20 99 e2"    # the 3 bytes marking a native sub entry (8 banks headered with it)
+vm_from_native = 0xE338          # native->VM MIRROR bridge: `JSR $E338` + 3 inline (target_lo,target_hi,argcount)
+                                 # runs bytecode via jmp($0008), resumes native at return+3. verified inline len.
+native_banks   = [1, 3, 4, 5, 6, 7, 8, 9, 10, 13, 17, 62]   # banks carrying $E299 native subs (pure: 3,4,6,7,10,13; mixed: rest)
+# NATIVE INVENTORY: 336 fixed-floor (banks 62/63) + 219 paged ($E299: 113 firm-stubbed + 106 jumptable-recovered
+# in pure banks + plain) = 555 native subs. Decoded per-bank: UW-decompile/source/1-asm-6502/bankNN.asm
+# (tools/disasm_native.py -- control-flow-followed, both inline bridges skipped). See docs/02, docs/03.
+# code_banks: 37 total = 29 vm_entry-stub + 8 native-trampoline-stub. 31/32-61 (mostly) = data/native. Window map (8000 vs A000) + co-residency = ch.2.
+code_banks     = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 35, 36, 37, 38, 62, 63]
+
+# ===================================================================================================
+# native_floor (koei-nes tools/native_floor.py; emu-harness MIGRATION.md row D). Values copied from
+# the seven per-title native_floor.py copies this replaces. A seed group without its count stays off,
+# so each title seeds exactly what its own copy seeded unless a count is added here.
+# oracle = the already-named title whose native subs lend their names (the chain each copy used).
+# ===================================================================================================
+[gk.native_floor]
+oracle         = "na1"
+syscall_slots  = 33              # jsr3: 3-byte JMP entries at syscall_table
+
+[na2.native_floor]
+oracle         = "na1"
+syscall_slots  = 31
+extop_table    = 0xEE7A          # from na2's copy; [na2] itself has no extop_* keys
+extop_slots    = 46
+
+[rot3k2.native_floor]
+oracle         = "na2"           # its copy seeded no syscall/ext-op tables
+
+[bk.native_floor]
+oracle         = "na2"
+syscall_slots  = 32
+extop_slots    = 48
+
+[gemfire.native_floor]
+oracle         = "rot3k2"
+syscall_slots  = 28
+extop_slots    = 48
+
+[lemp.native_floor]
+oracle         = "na2"
+syscall_slots  = 27
+syscall_tramps = [0xEF1E, 0xEF3E, 0xF984]
+# native leaves called only from bytecode (CALL_abs {native}), invisible to the native seeds
+extra_seeds    = [
+    0xD383, 0xD38D, 0xD3B6, 0xD402, 0xD43B, 0xD460, 0xD47C, 0xD4CD, 0xD53C, 0xD5A3, 0xD61B, 0xD7B0,
+    0xD7D1, 0xD7F3, 0xDC6B, 0xDCD6, 0xDCF6, 0xDD1F, 0xDD79, 0xDDCA, 0xDE0F, 0xDE2C, 0xDE3B, 0xDE6E,
+    0xDE77, 0xF3A3, 0xF423,
+]
+
+[uw.native_floor]
+oracle         = "lemp"
+syscall_slots  = 27
+syscall_tramps = [0xEEE7, 0xEF01, 0xF962, 0xF985]
+# bytecode-only native leaves + fixed-bank helpers reached only via the paged $E299 native-call banks
+extra_seeds    = [
+    0xC03E, 0xC0FA, 0xC104, 0xC144, 0xC179, 0xC1A3, 0xC2D8, 0xC2EA, 0xC325, 0xC32A, 0xC35F, 0xC366,
+    0xC36D, 0xC374, 0xC37B, 0xC382, 0xC41D, 0xC42F, 0xC444, 0xC47B, 0xC4A9, 0xC70B, 0xC719, 0xC770,
+    0xC799, 0xC7AA, 0xC7F6, 0xC824, 0xC9CD, 0xCCF3, 0xCD12, 0xCD20, 0xCD9F, 0xCE37, 0xCE4D, 0xCE8D,
+    0xCE9B, 0xCFE1, 0xD003, 0xD026, 0xD08C, 0xD1B0, 0xD230, 0xD29B, 0xD30C, 0xD326, 0xD394, 0xD405,
+    0xD532, 0xD550, 0xD56B, 0xD59E, 0xD652, 0xD6A6, 0xD6D6, 0xD718, 0xD75A, 0xD791, 0xD87B, 0xD8BE,
+    0xD92F, 0xD9A8, 0xD9EA, 0xDA2A, 0xDA6A, 0xDA89, 0xDAD1, 0xDC0C, 0xDC56, 0xDCEC, 0xDD6C, 0xDDE0,
+    0xDE3A, 0xDEA6, 0xE06F, 0xE08C, 0xE0C1, 0xE0D6, 0xE0EA, 0xE150, 0xE177, 0xE1B4, 0xE1D9, 0xE1EB,
+    0xE1FD, 0xE299, 0xE338, 0xE395, 0xE3BA, 0xE3F0, 0xE415, 0xE445, 0xE485, 0xE4BF, 0xEED4, 0xEF81,
+    0xEFB0, 0xF33A,
+]

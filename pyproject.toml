@@ -18,7 +18,7 @@ dev = ["pytest", "import-linter"]
 include = ["emu_harness*"]
 
 [tool.setuptools.package-data]
-"*" = ["*.lua"]
+"*" = ["*.lua", "*.toml", "*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -38,6 +38,12 @@ name = "CPUs know no console and no emulator"
 type = "forbidden"
 source_modules = ["emu_harness.cpu"]
 forbidden_modules = ["emu_harness.machines", "emu_harness.backends", "emu_harness.search"]
+
+[[tool.importlinter.contracts]]
+name = "VMs know no emulator"
+type = "forbidden"
+source_modules = ["emu_harness.vm"]
+forbidden_modules = ["emu_harness.backends", "emu_harness.search"]
 
 [[tool.importlinter.contracts]]
 name = "Backends know no console"
