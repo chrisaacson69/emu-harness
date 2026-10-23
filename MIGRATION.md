@@ -80,7 +80,7 @@ The **oracle** is how the fold is proven to change nothing.
 | A | **Emulator label export** (`.mlb`, workspace JSON) | koei-nes `gen_mlb_nes` · koei-snes `gen_mlb` · Elite `gen_mlb` · UW `export_mlb` · mappy `mappy_mlb` · na1 `mesen-labels` · game-annotation `mesen-labels`, `mesen-workspace` | `backends/mesen/labels` over `core/symbols` | byte-identical `.mlb` per repo |
 | A2 | Symbol registry + merge | `mesen-labels.toml` (na1, ro3k, Elite, UW) · mappy `labels.toml`/`vars.toml` · koei-snes `symbols.py` · merge: ro3k `merge_data_labels`, mappy `merge_labels`, UW `gen_labels` (1,275 lines), AeroBiz `gen_data_labels` | `core/symbols` (one schema) | round-trip each repo's toml unchanged |
 | A3 | Apply labels to a listing | game-annotation `asm-relabel` · Elite `apply_labels` · mappy `asm_gen` · UW `stamp_prg` | `passes/listing` | identical `.asm` |
-| B | **6502 disassembly** | koei-nes `disasm6502` (imported by 24 files) · ro3k `subs` · rot3k2 `disn` · UW `disasm_native` (control-flow-following, paged) · GemFire `inbank_native` · *nes-disasm6* (third-party) | `cpu/m6502` | identical listings over each title's banks |
+| B | **6502 disassembly** ✅ | koei-nes `disasm6502` (imported by 24 files) · ro3k `subs` · rot3k2 `disn` · UW `disasm_native` (control-flow-following, paged) · GemFire `inbank_native` · Mappy `static_expand`, `jump_tables`, `stored_pointers`, `pointer_tables` · koei-nes `native_floor.reach` · *nes-disasm6* (third-party) | `cpu/m6502` (`disasm`, `descent`); nes-disasm6 plugin in `machines/nes` | each fork's output on its home ROM; the CPU-log benchmark |
 | C | 6502 CPU emulation | koei-nes `koeivm/cpu6502` · ro3k `emulator_rotk` · koei-nes `koei_vm` (emulate) | `cpu/m6502` | na1's `test-cpu6502` / `test-dispatcher` + value-oracle |
 | D | **Native floor** (enumerate + name the kernel under the VM) | 7 NES forks (gk, na2, rot3k2, bk, GemFire, LEmp, UW) · koei-snes `native_floor` | `vm/koei/native_floor`, profile-driven | each title's current output, all 7 |
 | E | **Cross-title matchers** | ro3k `handler_match`, `bc_match` (gk has a verbatim copy), `native_match` · GemFire `multi_oracle` | `vm/koei/match` | same match tables |
@@ -141,8 +141,9 @@ to prove it fails.
    D and E import it:* koei-nes `disasm6502.py` moved to `emu_harness/cpu/m6502/disasm.py`, koei-nes
    keeps a re-export (all public names, checked). Oracle: `validate` vs NA1's committed `bank_15.asm`
    (6,634 instructions, 0 mismatches) plus 73 bank listings of 5 ROMs (NROM/MMC1/MMC5),
-   byte-identical through both import routes. Still to fold into B: ro3k `subs`, rot3k2 `disn`,
-   UW `disasm_native`, GemFire `inbank_native`, and the nes-disasm6 decision.
+   byte-identical through both import routes. ✅ **B done 2026-10-23**: one shared descent, nine
+   copies folded, nes-disasm6 a plugin. See "Row B done" below. C (emulation) and N (address model)
+   remain.
 5. **F: the KOEI VM**: koei-nes + koei-snes → `vm/koei` + two bindings. The largest move.
 6. **G: DREAM.** Three implementations at very different maturity; needs an IR contract. Last.
 
@@ -369,6 +370,69 @@ entries, mapped at $8000) during boot and title; it is not in `native_banks` and
 labels, so UW's "complete" 555-sub native inventory misses it. Bank 1's executed bytes are the
 3-byte `JSR vm_entry` stubs of bytecode subs (correctly not native subs).
 
+## Row B done: one shared descent (2026-10-23)
+
+`emu_harness/cpu/m6502/descent.py`: a `Window` (a ROM slice at a CPU base, optionally mirrored),
+`flow` (one routine: fall-through, both branch sides, `JMP abs` inside the window; ends at rts / rti
+/ `JMP (ind)`, an undocumented opcode, a known data byte, optionally BRK; a `JSR` to an
+inline-operand bridge skips its N data bytes), `descend` (every followed JSR target becomes an entry,
+to a fixpoint; a `follow` predicate vetoes targets, e.g. KOEI bytecode stubs), `gaps` (UW's
+prologue-recovery heuristic, generic), `verdicts`, and `Descent.overlaps()` (bytes one path decodes
+as a start and another as an operand; reported, not resolved by visiting order). nes-disasm6 is
+`machines/nes/nes_disasm6.py` (run from the configured clone, never vendored); the disasm6-listing
+parser is `disasm.listing_verdicts`. 10 tests; each of 11 planted mutations of the walker fails them.
+
+**Folded:** 9 copies of the walker in 6 repos, plus rot3k2's `disn` wrapper.
+
+| Fork | Now | Oracle on its home ROM |
+|---|---|---|
+| ro3k `subs.reach` | `descend` | 244 entry points x 16 banks: identical |
+| GemFire `inbank_native.reach` | `descend` | 231 cases x 32 banks + a full CLI run: identical |
+| koei-nes `native_floor.reach`, `decode_flow` | `descend` with a stub veto; `flow(end=, into_jmp=False)` | 7 titles x (table, `--toml`, `--check`) = 21 outputs: identical |
+| rot3k2 `disn` | `disasm.render` via the package | identical |
+| Mappy `static_expand`, `jump_tables`, `stored_pointers`, `pointer_tables` (4 copies of one walker) | `mappy/code_map.py`, one adapter over `descend` | whole pipeline in a temp copy: every coverage map and `jump_tables.txt` byte-identical, routine sets identical |
+| UW `disasm_native` | `descend` + `gaps`; keeps UW's stub convention and listing | 53 of 64 bank renders identical; 11 differ, every line named below |
+| disasm_bench's cold contender | `descend` | Elite identical; Mappy +0.1% data called code, named below |
+
+**Named differences (each a bug in a fork, not in the fold):**
+- UW listed an undocumented opcode it ran into as an instruction (`.db` lines; banks 4, 10, 39, 41,
+  54-56). Gone. In the data banks 33, 40 and 51 that byte had also hidden the start of runs of
+  `brk`/garbage, which the recovery pass then "recovered" as 9 subs; they are gone too.
+- UW's recovery pass listed subs first reached from a recovered sub but never walked them: bank 6's
+  `$9985` (`inc $00,x / bne / inc $01,x / rts`, a 16-bit increment) is now disassembled. UW's 555
+  count is unchanged (the sub was already counted). The 12 committed listings were regenerated: apart
+  from banks 4, 6 and 10 they differ from a fresh run only by label comments added since they were
+  last generated.
+- Mappy's routine lists now come out in plain sorted order (the old sort put raw `$8xxx` aliases
+  first; same sets). `pointer_tables` printed "routines: 378" counting 8 routines under both mirror
+  addresses; it now prints 370, matching its own "nodes=370".
+- The benchmark's old cold walker stopped a path that overlapped an earlier decode. On Mappy that
+  happened to cut one wrong path entering the middle of `sta ($f0),y` at `$F6A3` (3 bytes). No fork had
+  that rule, and whichever path arrived first is no evidence of which is right, so the shared descent
+  reports overlaps instead (`Descent.overlaps()`).
+
+**Combinations measured** (`+ nes-disasm6` = a contender's claims, nes-disasm6 for the rest):
+
+| | Elite: code found / data called code / starts real | Mappy: executed found / data called code | UW: executed found / data called code |
+|---|---|---|---|
+| nes-disasm6 alone | 99.1% / 4.1% / 92.6% | 98.5% / 5.7% | 92.9% / 4.7% |
+| cold descent + nes-disasm6 | 99.2% / 4.1% / 92.6% | 98.8% / 6.0% | 93.2% / 4.7% (with KOEI bridges) |
+| Mappy static_expand + nes-disasm6 | | **100.0%** / 6.1% | |
+| UW disasm_native + nes-disasm6 (its 12 banks) | | | 93.1% / 6.8% (nes-disasm6 alone there: 89.4% / 7.4%) |
+
+Filling a seeded descent with nes-disasm6 recovers what the seeds missed, at nes-disasm6's own
+false-code rate. Use descent's claims where it has them, and treat nes-disasm6's verdicts on the
+remainder as unverified.
+
+**Residue (not row B):**
+- UW `native_banks.walk_body` is a linear copy of the row-E `signature`, with target collection
+  added. It moves with E.
+- Running Mappy's `jump_tables.py` overwrites `jump_tables.txt`, which is curated: commit `673a53d`
+  added three level-data pointer tables by hand that the script does not find. That belongs to
+  row R. The committed Mappy outputs were left as they are.
+- The na1 handler classifiers (`classify-handlers`, `analyze-vm-opcodes`) use short fixed-length
+  scans, not descents. They belong to row F.
+
 ## Open questions (Chris)
 
 - **Three registry labels sit on operand bytes inside boot code**, with no caller and no table
@@ -376,7 +440,10 @@ labels, so UW's "complete" 555-sub native inventory misses it. Bank 1's executed
   gk `$C0A9 boot_init_tail_start_main`. They describe real code but are not entry points. Move
   each to the instruction where that code starts, or drop them?
 
-- **nes-disasm6** (row B, deferred): still read by `asm-relabel` / `zp-harvest`?
+- ~~**nes-disasm6** (row B, deferred): still read by `asm-relabel` / `zp-harvest`?~~ **Resolved
+  2026-10-23:** yes. Both read disasm6 listings (na1's `bank_NN.asm`, made with nes-disasm6 per na1
+  `tools/EXTERNAL.md`). It is kept as a plugin (`machines/nes/nes_disasm6.py`). Those two readers
+  belong to row A3.
 - **na1-snes-decompiler** has no vault pointer (it is now in the path resolver).
 - Do the koei-nes and koei-snes repos get **archived** after step 5, as nes-harness was?
 - UW-decompile: GitHub remote, public or private? (Its siblings GemFire and LEmp are public.)

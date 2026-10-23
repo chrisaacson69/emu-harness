@@ -139,6 +139,25 @@ def ref_stream(ref_path):
         out.append((prg, rb, insn))
     return out
 
+LISTING_LINE = re.compile(r";\s*([0-9A-Fa-f]{1,6}):\s+([0-9a-fA-F ]+?)\s*(?:;.*)?$")   # unpadded offsets too
+LISTING_MNEM = re.compile(r"^\s*(?:[@\w]+:)?\s*([a-z]{3})\b")
+
+def listing_verdicts(text, size):
+    """A disasm6-style listing (ours from `render`, nes-disasm6's) -> one verdict per PRG byte:
+    "I" instruction start, "O" operand, "D" a `hex`/`.db` data row, "" not listed."""
+    v = [""] * size
+    for line in text.splitlines():
+        m = LISTING_LINE.search(line)
+        if not m:
+            continue
+        off, n = int(m.group(1), 16), len(m.group(2).split())
+        mm = LISTING_MNEM.match(line.split(";", 1)[0])
+        insn = bool(mm) and mm.group(1) != "hex"
+        for j in range(n):
+            if off + j < size:
+                v[off + j] = ("I" if j == 0 else "O") if insn else "D"
+    return v
+
 def my_stream(rom, bank, base=0xc000):
     out = []
     for addr, prg, raw, mn, operand in disasm_bank(rom, bank, base):
