@@ -46,6 +46,12 @@ source_modules = ["emu_harness.vm"]
 forbidden_modules = ["emu_harness.backends", "emu_harness.search"]
 
 [[tool.importlinter.contracts]]
+name = "Passes know no emulator"
+type = "forbidden"
+source_modules = ["emu_harness.passes"]
+forbidden_modules = ["emu_harness.backends", "emu_harness.search"]
+
+[[tool.importlinter.contracts]]
 name = "Backends know no console"
 type = "forbidden"
 source_modules = ["emu_harness.backends"]

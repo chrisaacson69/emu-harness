@@ -128,7 +128,8 @@ to prove it fails.
    to fail on a planted violation. The three `sys.path` hacks pointing at emu-harness are gone
    (`tools/replay_log`, `spike/mesen/smoke`, game-annotation `mappy_search`). **Rule from here:**
    a tool that moves in is imported, never path-hacked, and the family runs on `py -3.14`.
-1. ✅ **A: label export (2026-10-22).** See "Row A done" below.
+1. ✅ **A: label export (2026-10-22).** See "Row A done" below. ✅ **A3 2026-10-23:** one label
+   pass over listings (`passes/listing`); row A closed. See "Row A3 done" below.
 2. ✅ **D: native floor (2026-10-22).** See "Row D done" below.
 3. **E: matchers.** Dissolves the ro3k pseudo-library and its 7 hardcoded paths. *Generic half done
    2026-10-22:* `cpu/m6502/signature.py` (relocation-invariant signature + best_match),
@@ -299,6 +300,39 @@ two sections (reported by `gen_mlb`).
 **Reader debt found:** koei-nes `bank_scoped_labels` reads comments with `"([^"]*)"`, so an
 escaped quote ends the comment at its backslash. No output uses those comments today (all
 consumers keep the name only); fix it when koei-nes reads through `core.symbols` (row F).
+
+## Row A3 done: one label pass over listings, and row A closed (2026-10-23)
+
+**Three copies of one job, in two dialects.** The inventory listed four tools. Reading them gave
+three relabelers, one more that the inventory had missed, and two tools that do other jobs.
+- **disasm6 dialect.** NA1's `tools/mesen-labels.py --asm` is the mature copy of game-annotation's
+  `asm-relabel`, which the inventory missed:
+  - `bN_XXXX` tokens and RAM operands become names, and the trailing `; OFFSET: bytes` comment is
+    protected.
+  - `$C000+` names count as the fixed bank's under any section.
+  - Fixed-bank anchors are inserted.
+- **Sweep dialect** (our own listings). Elite's `apply_labels` resolves an operand by where it
+  lives: RAM, the fixed bank, or its own bank, a heuristic Elite's trampolines make sound.
+- **Not this job:**
+  - UW `stamp_prg` appends PRG offsets, which is address-model annotation and stays UW's.
+  - Mappy `asm_gen` is a coverage-driven listing generator (row R).
+  - NA1 `zp-harvest` is a zero-page usage census (row K).
+
+**Now:** `passes/listing.py` (a new layer, with the contract "Passes know no emulator" shown to
+fail on a planted violation).
+- **Functions:** `registry_maps` (via `core.symbols`), `disasm6_maps` + `fixed_anchors` +
+  `relabel_disasm6`, and `relabel_sweep`.
+- **The fixed bank is a parameter** (NA1 15, Elite 7); the copies hardcoded it.
+
+| caller | oracle |
+|---|---|
+| NA1 `mesen-labels.py --asm / --verify` | `--verify`: all 4 labeled banks identical to the old algorithm's output. Needs `py -3.14` now (it said `--asm` ran on py -3) |
+| Elite `tools/apply_labels.py` (thin) | fresh raw listings by its README recipe (which reproduce the committed ones), relabeled old vs new: 8 banks + log identical |
+| game-annotation `tools/asm-relabel.py` (thin CLI) | on NA1's raw banks it now equals NA1's labeled output exactly. Named: vs its own old output, 128 lines gain a name: fixed-bank labels filed under `[prg.bank0]`, which the old copy could not see. No other difference |
+| Mappy `asm_gen.py` | only its path-hacked koei-nes import → `emu_harness.cpu.m6502.disasm`; regenerated `mappy_labeled.asm` unchanged |
+
+**Row A is complete:** label export (A), valid registries (A2), and labels applied to listings
+(A3) each have one implementation.
 
 ## Row D done: one native-floor tool (2026-10-22)
 
@@ -953,6 +987,8 @@ finished toolset, not just the items below.
 | ro3k-decompiler | Committed `2-asm-vm` / `4-c` came from the old `vm_disasm_rotk` / `vm_decompile_rotk`: banner names the NA1 ROM, the C uses NA1's ext-op addresses and province field names and unnamed syscalls. A regeneration with the driver (the wrappers now run it) fixes them. | row F3 |
 | na1-decompiler | `nobunaga/vm-opcodes.toml` is a legacy opcode table (the old spec's lengths) still read by `analyze-vm-opcodes` / `gen-opcode-appendix`; point them at the shared table and retire it. | row F3 |
 | na1-decompiler | 148 fixed-region (`$C000`+) names are filed under `[prg.bank0]` (e.g. `rng_mod` `$CA52`, `min_word`, `draw_message`, `cursor_nav_loop`, `nmi_off`), so bank 15's own scoped view (its listing, its C, the family report) cannot see them. Move them to `[prg.bank15]`. | row E `family` FILLs |
+| na1-decompiler | The 4 `source/1-asm-6502/bank_NN_labeled.asm` were removed from git by `2d2e7ef` ("recreate the source ladder") and exist only as untracked local files, while `CONTEXT.md` and `mesen-labels.py` call them committed and `--verify` checks them. Re-add them (they verify clean). | row A3 |
+| elite-decompiler | `apply_labels.py` rewrites `source/asm/` in place, so a renamed label never reaches the listings until they are re-swept: always run the README's sweep first, or write labeled copies beside raw ones. | row A3 |
 | UW-decompile | `gen_labels.py` no longer reproduces `mesen-labels.toml` (it writes 1,090 lines; the committed file has 1,468, grown by the walks). Running it overwrites walked names: retire it, or make it merge. | row E oracle |
 | UW-decompile | Names that contradict their byte-identical twins: `loop_init_c4dc` `$C4DC` = GemFire `parse_uint`; `incr_deref_field` `$C4FE` = ro3k `emit_decimal_digits_recursive` / GemFire `itoa_append`. | row E `family` |
 | rot3k2-decompiler | `native_bytecode_called.py` now finds 0 fixed-region `sub_XXXX` calls in the C (its input looks stale or fully named); check whether it is still needed. | row E oracle |
