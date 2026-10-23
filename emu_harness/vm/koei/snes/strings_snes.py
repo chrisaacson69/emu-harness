@@ -14,15 +14,13 @@ rather than re-deriving it -- resolved by the sibling convention `../snes-decomp
 """
 import argparse
 import os
-import re
 import sys
 
 # Reuse the shared SNES substrate (sibling repo).
 _HERE = os.path.dirname(os.path.abspath(__file__))
 from emu_harness.machines.snes.mapper import file_to_cpu, strip_copier_header  # noqa: E402
 from emu_harness.machines.snes.header import detect                        # noqa: E402
-
-RUN = re.compile(rb"[ -~]{%d,}")
+from emu_harness.passes.strings import printable_runs                     # noqa: E402
 
 
 def main(argv):
@@ -42,15 +40,14 @@ def main(argv):
     sys.stderr.write("mapping=%s title=%r%s\n" %
                      (mapping.upper(), f["title"], "  (+512 copier stripped)" if copier else ""))
 
-    pat = re.compile(rb"[ -~]{%d,}" % args.min)
     grep = args.grep.lower() if args.grep else None
     n = 0
-    for m in pat.finditer(rom):
-        s = m.group().decode()
+    for start, raw in printable_runs(rom + b"\x00", args.min):    # passes.strings (row L); the NUL
+        s = raw.decode()                                            # ends a run that reaches the end
         if grep and grep not in s.lower():
             continue
-        bank, addr = file_to_cpu(mapping, m.start())
-        print("%06X  $%02X:%04X  %r" % (m.start(), bank, addr, s))
+        bank, addr = file_to_cpu(mapping, start)
+        print("%06X  $%02X:%04X  %r" % (start, bank, addr, s))
         n += 1
         if args.limit and n >= args.limit:
             break

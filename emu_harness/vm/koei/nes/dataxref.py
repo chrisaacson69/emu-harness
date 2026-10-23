@@ -33,6 +33,7 @@ import sys
 from collections import defaultdict
 
 from emu_harness.core.symbols import read_registry
+from emu_harness.passes.strings import referenced_text, slug_anchor as _slug
 from emu_harness.vm.koei.isa import TABLE
 from emu_harness.vm.koei.match import _fields
 from emu_harness.vm.koei.nes.callgraph import TitleSpace
@@ -75,6 +76,7 @@ class Index:
         self.ram = defaultdict(list)                   # addr -> [ref]
         self.rom = defaultdict(list)                   # (bank, addr) -> [ref]
         self.unowned = []                              # (ref, why): a ROM ref with no single owning bank
+        self.content_owned = 0                         # unowned pointers placed by their content (rom_index)
         for b in sp.views:
             for stub, instrs in sp.subs(b):
                 for ins in instrs:
@@ -218,11 +220,23 @@ def rom_index(X):
     """-> (idx, code_addrs): idx[addr][bank] = [{sub, ins, mnem}] for every ROM pointer;
     code_addrs[bank] = the decoded instruction addresses (a pointer onto one is a CODE pointer)."""
     idx = defaultdict(lambda: defaultdict(list))
+    entry = lambda r: {"sub": r["sub"], "sb": r["bank"], "ins": r["ins"], "mnem": IMM_WORD_OPS.get(r["opc"], r["mnem"])}
     for (bank, addr), rs in X.rom.items():
         for r in rs:
             if r["kind"] == "ptr":
-                idx[addr][bank].append({"sub": r["sub"], "sb": r["bank"], "ins": r["ins"],
-                                        "mnem": IMM_WORD_OPS.get(r["opc"], r["mnem"])})
+                idx[addr][bank].append(entry(r))
+    # A pointer two or more co-resident banks could own: the one candidate whose bytes are TEXT owns it
+    # (bk ref_strings' ground-truth rule); with none or several, it stays unowned.
+    for r, _why in X.unowned:
+        if r["kind"] != "ptr":
+            continue
+        cands = [c for c in X.sp.cfg.get(f"coresident_{r['bank']}", []) if X.sp.covers(c, r["cpu"])]
+        if len(cands) < 2:
+            continue
+        texty = [c for c in cands if _text_at(X, r["cpu"], c)]
+        if len(texty) == 1:
+            idx[r["cpu"]][texty[0]].append(entry(r))
+            X.content_owned += 1
     code_addrs = defaultdict(set)
     for b in X.sp.views:
         for _stub, instrs in X.sp.subs(b):
@@ -231,6 +245,12 @@ def rom_index(X):
 
 
 IMM_WORD_OPS = {0x8A: "loadA", 0x8C: "loadB", 0x8E: "push"}
+
+
+def _text_at(X, addr, bank):
+    o = X.prg(bank, addr)
+    end = X.prg_bytes.find(0, o, o + 200)
+    return end > o and referenced_text(X.prg_bytes[o:end])
 
 
 def decode_str(X, addr, bank, maxn=64):
@@ -268,6 +288,11 @@ def classify(X, addr, bank, code_addrs=None):
     if (n >= 2 and ratio >= 0.85 and not text.startswith("[")
             and len(set(raw)) > 1):
         return "str"
+    # a string that LEADS with control codes (KOEI's ESC $1B colour / cursor sequences, a newline):
+    # rom-xref's test above rejects any non-printable first byte; bk ref_strings' clean-start rule
+    # accepts the control prefix and still refuses table bytes (passes.strings.referenced_text)
+    if referenced_text(X.prg_bytes[o:o + n]):
+        return "str"
     return "tbl"
 
 
@@ -277,22 +302,6 @@ def _sub_name_rom(X, sub, bank):
         return "(top-level)"
     n = X.rom_name(sub, bank)
     return f"{n} (${sub:04X})" if n else f"sub_${sub:04X}"
-
-
-def _slug(text, maxlen=30):
-    """Readable label stem from decoded text. Strips control/cursor prefixes (the
-    `>[16]80` tile codes that prefix many strings) by anchoring on the first letter,
-    so all entry-point variants of one message converge to the same stem."""
-    s = re.sub(r'\[[0-9a-f]{2}\]', '', text)         # drop raw hex escapes
-    s = s.replace('\\n', ' ').replace('\\r', ' ')
-    m = re.search(r'[A-Za-z].*', s)                   # anchor on first letter
-    core = m.group(0) if m else s
-    slug = re.sub(r'[^A-Za-z0-9]+', '_', core).strip('_').lower()[:maxlen].rstrip('_')
-    if len(re.sub(r'[^a-z]', '', slug)) >= 2:         # enough letters to be meaningful
-        return slug
-    # letterless (pure format/punct string, e.g. "%2d", " "): name by its specifiers
-    fmt = "_".join(re.findall(r'%[0-9]*[dscx]', text)) or "blank"
-    return ("fmt_" + re.sub(r'[^A-Za-z0-9]+', '_', fmt)).strip('_').lower()
 
 
 def iter_pointers(idx, bank_filter=None):

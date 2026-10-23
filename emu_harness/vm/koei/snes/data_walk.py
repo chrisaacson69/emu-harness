@@ -12,12 +12,7 @@ import os
 import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 from emu_harness.machines.snes.mapper import cpu_to_file, strip_copier_header, LOROM
-
-
-def slug(s, addr):
-    w = "".join(c if c.isalnum() else "_" for c in s.strip().lower()).strip("_")
-    w = "_".join(p for p in w.split("_") if p)[:28]
-    return w or ("str_%04X" % addr)
+from emu_harness.passes.strings import slug_plain as slug   # row L: the shared name stems
 
 
 def main(argv):

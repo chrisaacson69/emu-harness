@@ -602,6 +602,58 @@ skill runs them on `py -3.14`.
   candidate `tables --shape` view later.
 - koei-snes `data_walk`: SNES string scan, row L.
 
+## Row L done: strings (2026-10-23)
+
+Chris: finding strings early "made inference much easier". They are the purest oracle: the bytes
+name themselves, so a routine that references `msg_recruit` is the recruit command.
+
+**Two families, one scanner.**
+- **Pure scans** (no code needed, run first): bk / GemFire `pure_strings` (near-copies), UW
+  `dump_strings`, koei-snes `strings_snes` and `data_walk`.
+- **Referenced resolvers** (strings the code points at): bk `ref_strings` and rot3k2
+  `extract_strings`.
+
+**Now `passes/strings.py`,** console-neutral:
+- scans: `nul_runs`, `printable_runs`, `nul_slots`;
+- judgments: `is_text`, pure_strings' strict English filter; `starts_clean` + `is_string`, ref_strings'
+  test for a pointed-to string that may lead with control codes;
+- the three slug styles in use, kept as named functions because each registry has names made by
+  its own: `slug_words` (pure_strings), `slug_anchor` (rom-xref; its `fmt__3d` included),
+  `slug_plain` (data_walk).
+
+**The commands:**
+- **`vm/koei/nes/strings.py`** for any KOEI NES title:
+  - `pure` (classify / `--toml` / `--apply`): banks come from the profile's bank size over PRG only,
+    where pure_strings assumed 8K; the always-emit bank is the cart's fixed bank, not bank 31.
+  - `dump` (UW's runs / `--table`).
+- **koei-snes `strings_snes`** runs `printable_runs` and **`data_walk`** uses `slug_plain`.
+- **The referenced pass is row K's `dataxref strings`,** with ref_strings' two rules folded in:
+  - a control-prefixed string is a string (rom-xref's test had rejected any non-printable first
+    byte);
+  - a pointer two co-resident banks could own goes to the one whose bytes are text (rot3k2: 62).
+  - NA1's `strings --toml` and string frontier are still identical.
+
+**Oracles:**
+- bk and GemFire `pure_strings` (both modes): identical.
+- UW `dump_strings` (banks 2 / 21 / 40, three forms): identical.
+- `strings_snes` (rot3k2 and GemFire, two forms) and `data_walk`: identical.
+
+**What the old referenced tools missed.**
+- bk `ref_strings` read its decompiles from a temp folder that no longer exists, and reported
+  **0**.
+- rot3k2 `extract_strings` took only string-address arguments of known text functions out of the
+  committed C, and found **1**.
+- The pointer pass finds unlabeled, referenced, real text: rot3k2 **301**, GemFire **250**, bk
+  **82** (222 / 241 / 52 with no name at that address anywhere). Examples: GemFire "Break
+  alliance with the %s family?" in `cmd_ally`, "You don't have enough gold" in `cmd_search`;
+  rot3k2 "Attack" in `run_duel`.
+- Both tools are now thin CLIs onto that pass.
+
+**Stays:** rot3k2 `strdump` (a hex+ASCII peek) and NA1 `ui-strings` (its one known UI table).
+
+**Text encoding:** every title here is ASCII ended by `$00`, with `$0A` / `$1B`. A profile key
+arrives with the first title that differs.
+
 ## Row D done: one native-floor tool (2026-10-22)
 
 **Shape.** The 7 copies were not one algorithm with per-title constants: they were 7 stages of
@@ -1255,6 +1307,7 @@ finished toolset, not just the items below.
 | ro3k-decompiler | Committed `2-asm-vm` / `4-c` came from the old `vm_disasm_rotk` / `vm_decompile_rotk`: banner names the NA1 ROM, the C uses NA1's ext-op addresses and province field names and unnamed syscalls. A regeneration with the driver (the wrappers now run it) fixes them. | row F3 |
 | na1-decompiler | `nobunaga/vm-opcodes.toml` is a legacy opcode table (the old spec's lengths) still read by `analyze-vm-opcodes` / `gen-opcode-appendix`; point them at the shared table and retire it. | row F3 |
 | na1-decompiler | 148 fixed-region (`$C000`+) names are filed under `[prg.bank0]` (e.g. `rng_mod` `$CA52`, `min_word`, `draw_message`, `cursor_nav_loop`, `nmi_off`), so bank 15's own scoped view (its listing, its C, the family report) cannot see them. Move them to `[prg.bank15]`. | row E `family` FILLs |
+| rot3k2-decompiler, GemFire-decompiler, bk-decompiler | Name the referenced strings the old resolvers could not see: `dataxref <title> strings --toml` (rot3k2 301, GemFire 250, bk 82 unlabeled; the referencing routines are named). | row L |
 | gk-decompiler | koei-nes `data_xref` read bank ≥ 1 PRG at 8K strides on this 16K cart (fixed in row K). 41 of its 89 bank ≥ 1 `msg_` names do not decode to their text at the right offset; most look hand-named (`msg_fmt_*`) — confirm none came from a wrong-offset `data_xref strings` run. | row K |
 | na1-decompiler | Before the next walk batch: regenerate `source/` (`py -3.14 tools/na1_regen.py`), since the committed C predates the engine's enum names / banner / F2 fixes (18 files change), and every batch's guard would otherwise refuse the non-rename diff. `source/4-c/all_banks.c` (the merged PRG-keyed view) has no generator since `decompile-merged.py` went; regenerate it from the shared engine, or retire it. | row J |
 | rot3k2-snes-decompiler, Gemfire-snes-decompiler | Regenerate `src/` (`gen_layers`): with the co-residency now declared, overlay calls into `comroot` / `hex` / `command` are named and `comroot` `$BBF6` is native code; the committed files predate both. | row H2 |
