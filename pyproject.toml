@@ -12,6 +12,7 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest", "import-linter"]
+render = ["pillow"]          # machines.nes.ppu and the KOEI asset layer draw with PIL
 
 # Editable installs only (`pip install -e`): the Mesen client reads config.toml from the repo root.
 [tool.setuptools.packages.find]
