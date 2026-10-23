@@ -46,10 +46,44 @@ def nes_ext(e):
     return VD.instr_len(Zeros(0xB7, e), 0) - 2     # bytes after the ext index
 
 
+def snes_effect(o):
+    """(pops, pushes, writes regA, writes regC) in words, from an SNES op's lift template."""
+    from emu_harness.vm.koei.isa import RA, RC, parse_template, step_exprs, template_effects, template_reads
+    steps = parse_template(o.c)
+    pops = sum(template_reads(e)[2] for st in steps for e in step_exprs(st)) // 2
+    pushes = sum(st[1] for st in steps if st[0] == "push") // 2
+    _use, dfn = template_effects(steps)
+    return pops, pushes, bool(dfn & RA), bool(dfn & RC)
+
+
+def effects(show_all=False):
+    """NES vm_stack_effect (audited on the NES handlers by gates/stack_audit) vs the SNES lift
+    templates (checked on the SNES handlers by vm_isa.bind), for every fall-through opcode both
+    describe. regL/regR (NES) are regA/regC (SNES)."""
+    from emu_harness.vm.koei.nes.vm_stack_effect import STACK_EFFECT
+    T = vm_isa.TABLE
+    agree, rows = 0, []
+    for op, e in sorted(STACK_EFFECT.items()):
+        o = T.primary.get(op)
+        if e.cls not in ("data", "push", "pop", "store") or o is None or o.cf != "none" or not o.c:
+            continue
+        nes_e = (e.pops, e.pushes, e.regL == "w", e.regR == "w")
+        sn = snes_effect(o)
+        if nes_e == sn:
+            agree += 1
+        if show_all or nes_e != sn:
+            rows.append(f"  ${op:02X} NES {e.mnem:16} pops/pushes/wL/wR {nes_e}   SNES {o.name!r} {sn}  c={o.c!r}")
+    print(f"stack effects: {agree} agree, {len(rows) if not show_all else len(rows) - agree} differ")
+    print("\n".join(rows))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--all", action="store_true", help="print the agreeing opcodes too")
+    ap.add_argument("--effects", action="store_true", help="compare stack / register effects instead of lengths")
     a = ap.parse_args(argv)
+    if a.effects:
+        return effects(a.all)
     T = vm_isa.TABLE
     tally = {}
     rows = []

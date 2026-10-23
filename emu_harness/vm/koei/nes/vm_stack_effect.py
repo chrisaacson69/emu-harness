@@ -157,15 +157,21 @@ def _build():
     _o(0xB3, Effect('PUSHL', 'push', pushes=1))                    # push regL
     _o(0xB4, Effect('POPR', 'pop', pops=1, regR='w'))             # regR = pop()
     _o(0xB5, Effect('MULT', 'data', regL='w'))                    # regL = regL * regR
-    _o(0xB6, Effect('SDIV', 'data', regL='w'))
+    # Signed div/mod leave regR = |regR| (the handler takes the divisor's absolute value in place):
+    # measured on all 9 NES titles with a negative divisor (100 / -3 -> regR $FFFD becomes $0003;
+    # MIGRATION.md row F3), as the SNES table's lift template says. Only a negative divisor shows it,
+    # which is why the audit, run on the code banks' own values, had it as kept.
+    _o(0xB6, Effect('SDIV', 'data', regL='w', regR='w'))
     _o(0xB7, Effect('LONG', 'probe'))                             # ext-op prefix (per-index)
     _o(0xB8, Effect('UDIV', 'data', regL='w'))
-    _o(0xB9, Effect('SMOD', 'data', regL='w'))
+    _o(0xB9, Effect('SMOD', 'data', regL='w', regR='w'))
     _o(0xBA, Effect('UMOD', 'data', regL='w'))
     _o(0xBB, Effect('ADD', 'data', regL='w'))
     _o(0xBC, Effect('SUB', 'data', regL='w'))
-    # Shifts use regR as a decrementing shift COUNTER (consumed to 0) — regR is clobbered,
-    # not preserved (audit-confirmed). regL holds the result.
+    # Shifts use regR's low byte as a decrementing shift COUNTER: it ends at $FF (regR $0003 ->
+    # $FF03 on all 9 NES titles, measured in MIGRATION.md row F3) -- regR is clobbered, not preserved
+    # (audit-confirmed). regL holds the result. A NES-only effect: the SNES handlers keep regC (the
+    # shared table's template, checked by snes/vm_isa.bind), so this stays here, in the NES layer.
     _o(0xBD, Effect('LSHIFT', 'data', regL='w', regR='w'))        # regL <<= regR
     _o(0xBE, Effect('URSHIFT', 'data', regL='w', regR='w'))
     _o(0xBF, Effect('SRSHIFT', 'data', regL='w', regR='w'))
