@@ -1,0 +1,156 @@
+# KOEI SNES engine — per-title profiles. The bytecode VM is shared across titles;
+# only these addresses move (the engine is relocated/reassembled per game). Add a
+# block per title; the tools take --game <name> (or $KOEI_SNES_GAME). There is no default
+# profile: without either, a tool that has the ROM picks the ONE profile whose header_title
+# equals the ROM header, and every tool checks the chosen profile against the ROM (tools/profile.py).
+# Must be valid TOML: tools/profile.py reads it via minitoml.load_file (tomllib on 3.11+, else
+# minitoml's own reader -- the same dicts either way).
+#
+# Identity keys (required): header_title = the ROM's internal header title ($00:FFC0, 21 bytes,
+# right-stripped), rom_bytes = the ROM size. abi_syscall = the ABI trampoline a native syscall
+# stub JSLs to (bytecode reaches a syscall by call.p to such a stub; the lifter names it).
+#
+# Optional residency keys (defaults keep the rot3k2/gemfire behaviour):
+#   resident_modules = [...]      modules always in WRAM (default ["root"])
+#   [<game>.coresident]           module = [modules co-loaded with it] (default: none)
+#
+# Discover a new title's constants with the snes-decompiler + koei-snes tools:
+#   header/mapping        -> snes-decompiler/tools/header_parse.py
+#   $00:8000 ABI table    -> disasm the 4 JMPs before RESET
+#   interpreter_loop      -> the $9A8F-style fetch: LDA [$06]/INC $06/JMP (table,X)
+#   primary/extended tbl  -> the table the loop indexes (256 entries) + the $B7 target
+#   syscall_table         -> JSR ($xxxx,X) after the 22-byte param-block copy
+#   fetch_helpers         -> the subs each doing LDA [$06] + INC $06 (1 or 2 bytes)
+
+[rot3k2]
+title        = "Romance of the Three Kingdoms II (USA)"
+header_title = "ROMANCE 3 KINGDOMS 2"
+mapping      = "lorom"
+rom_bytes    = 1048576
+reset        = 0x800C
+abi_table    = 0x8000        # 4 JMP trampolines: $8000->$9A4C run-VM, $8003->$9A28 syscall, $8006/$8009->$A2E6 ext-op
+abi_syscall  = 0x8003        # syscall stub root $23EA = JSL $008003
+interpreter_loop  = 0x9A8F   # main fetch-decode-dispatch (NB: the PLB one byte before the loop head; see CONTEXT.md backlog)
+ext_interpreter   = 0xA2E6   # $B7 prefix lands here
+primary_table     = 0xA0E6   # 256 entries ($A0E6..$A2E5)
+extended_table    = 0xA2FE   # 48 entries (32-bit math)
+extended_prefix   = 0xB7
+invalid_handler   = 0xA082   # shared nop/invalid (38 unused opcodes -> 218 real)
+syscall_table     = 0x937B   # 69 entries
+syscall_count     = 69
+syscall_dispatch  = 0x8C1D
+run_vm_entry      = 0x9A4C
+resource_archive  = 0xF800   # named-blob directory (root/comroot/excsub/...)
+# WRAM overlay map (module header = JMP base+3). Overlays share a slot (one at a time).
+# The archive has 33 rows, 29 of them bytecode modules (tools/archive.py --code; 1,358 routines by
+# vm_walk --all): root=$7E:2000 resident; settei/kisetsu/comroot/hex/sengo/opend=$7200;
+# excsub1-6=$C300; hsovl1-6=$CC00; csovl1-7=$CD00; hsovl51-53=$D800. cbmdata1 (JMP-header row,
+# base $0000) is a data blob, not code. module_bases below is the historical subset (unused by tools).
+module_bases = { root = 0x2000, comroot = 0x7200, settei = 0x7200, kisetsu = 0x7200, cbmdata1 = 0x0000, excsub = 0xC300 }
+loader            = 0x9636   # cross-bank block copy -> WRAM (self-mod MVN at $006C)
+code_span         = [0x800C, 0xB20A]   # native engine extent (rest of bank $00 = data)
+# operand-fetch helpers -> bytes each pulls from the bytecode PC ($06)
+fetch_helpers = { 0xA089 = 1, 0xA09B = 1, 0xA0BC = 2, 0xA0C4 = 2, 0xA0CE = 2 }
+# Per-routine native trampoline (same convention as gemfire; discovered via the cross-title
+# compare): each bytecode routine is prefixed by `JSR $23E6` + a 2-byte param, body at +5.
+# (The original rot3k2 walk used offset 0, decoding the 5-byte trampoline as bytecode.)
+routine_sig         = [0x20, 0xE6, 0x23]   # JSR $23E6 (the rot3k2 module-launcher trampoline)
+routine_body_offset = 5
+
+[gemfire]
+# 2nd KOEI SNES title. Every constant below was derived FRESH from the Gemfire ROM
+# (never copied from rot3k2/NES-Gemfire); prior projects are held as post-hoc oracles.
+title        = "Gemfire (USA)"
+header_title = "GEMFIRE"
+mapping      = "lorom"
+rom_bytes    = 1048576
+reset        = 0x800F        # +3 vs rot3k2 ($800C): abi_table has 5 JMPs here, not 4
+abi_table    = 0x8000        # 5 JMP trampolines: $8000->$A2FC run-VM, $8003->$A2D8 syscall, $8006/$8009->$AB96 ext-op, $800C->$8E8B syscall twin
+abi_syscall  = 0x8003        # syscall stub root $328B = JSL $008003
+interpreter_loop  = 0xA340   # main fetch: SEP; LDA [$06],Y; REP; INC $06; index $A996; JMP ($00)
+primary_table     = 0xA996   # 256 entries ($A996..$AB95)
+invalid_handler   = 0xA932   # modal x38 -> 218 real opcodes (matches rot3k2's 218; oracle-pending)
+extended_prefix   = 0xB7     # the only primary opcode whose handler is $AB96
+ext_interpreter   = 0xAB96   # $B7 lands here; reads next bytecode byte, indexes $ABAE
+extended_table    = 0xABAE   # 48 entries ($ABAE..$AC0D); handlers begin $AC0E
+# op$00-$0F = ldA frame[n] (verified: $A35B stub loads a negative frame offset, common $A395 = regA=*(frame+off));
+# opcodes are byte-identical to the shared VM -> koei-snes/data/vm_opcode_names.toml applies directly.
+syscall_table     = 0x9A82   # 82 entries ($9A82..$9B25); break at sys$52 -> $2000 (WRAM)
+syscall_count     = 82       # (rot3k2 had 69 — Gemfire genuinely has more; derived here)
+syscall_dispatch  = 0x8E64   # LDA $0052 (syscall#) / ASL / JSR ($9A82,X); twin wrapper $8E8B
+resource_archive  = 0xF800   # 20 rows [name8][bank u16][addr u16][len u32], zero row at $F940 (tools/archive.py)
+run_vm_entry      = 0xA340   # NB: this is the loop head; the routine prologue is $A2FC (the $8000 ABI target,
+                             # = rot3k2 $9A4C / aerobiz $A29B) -- kept as is, see CONTEXT.md re-grade backlog
+loader            = 0x9B64   # archive name-search (walks $F800 16-byte entries); block copy at $9D14/$9D57
+code_span         = [0x800F, 0xBB93]   # native_floor reachability walk: 6414 insns, code ends $BB93 (above = data)
+# The archive has 20 rows, 18 of them bytecode modules (tools/archive.py --code; 670 routines by
+# vm_walk --all). WRAM bases: root $2000 (resident; boot JML [$809C]=$7E2000); open/settei/event/command
+# $5300; comusr1/comusr2/comcmp/senzen/sensou/sengo $6400; ending $8500; sntanm1-5/sendisp $B000.
+# bdata / bg_map are data rows. module_bases below is the historical subset (unused by tools).
+module_bases = { root = 0x2000 }
+# operand-fetch helpers (just below primary_table, as in rot3k2): bytes each pulls from PC ($06)
+# (corrected 2026-09-30: was { 0xA93E = 1, 0xA96C = 2, 0xA974 = 2 } -- $A93E is inside the s8 helper
+#  whose entry is $A939 (SEP/LDA #0/XBA/LDA [$06],Y), and $A94B/$A97E were missing. Derived from the
+#  handlers' JSR targets: same 21/5/15/17/15 call pattern as rot3k2 and aerobiz; vm_isa.bind checks it.)
+fetch_helpers = { 0xA939 = 1, 0xA94B = 1, 0xA96C = 2, 0xA974 = 2, 0xA97E = 2 }
+# Per-routine native trampoline: each bytecode routine is prefixed by `JSR $3287` + a 2-byte
+# param, so a call target ($AC/$E9) points at the trampoline and the bytecode BODY is at +5.
+# (rot3k2 default = sig [0x20,0xE6], offset 0.) See docs/00-recon.md.
+routine_sig         = [0x20, 0x87, 0x32]   # JSR $3287 (the $3287 module-launcher trampoline)
+routine_body_offset = 5                    # JSR(3) + 2-byte inline param -> body
+
+[aerobiz]
+# 3rd KOEI SNES title: Aerobiz (USA) -- the ORIGINAL (JP Air Management: Oozora ni Kakeru, SFC 1992-04;
+# never on NES/Famicom). Every constant derived FRESH from the Aerobiz ROM by the recon #1 workflow
+# (7 derive families, 8 independent verifiers, 1 critic; all verified) -- AeroBiz-decompiler/docs/00-recon.md.
+title        = "Aerobiz (USA)"
+header_title = "AEROBIZ"
+mapping      = "lorom"
+rom_bytes    = 1048576
+reset        = 0x800C        # same as rot3k2 (4 ABI JMPs)
+abi_table    = 0x8000        # $8000->$A29B run-VM, $8003->$A277 syscall, $8006/$8009->$AB35 ext (unreferenced)
+abi_syscall  = 0x8003        # syscall stub COMMON $1C14 = JSL $008003 (3,313 bytecode call sites)
+interpreter_loop  = 0xA2DF   # loop HEAD (gemfire convention); $A2DE = PLB tail of run_vm_entry
+primary_table     = 0xA935   # 256 entries ($A935..$AB34), 162 distinct handlers
+invalid_handler   = 0xA8D1   # BRK stub x38 (80, 91-9F, B2, CE, EB-FE); op $FF -> $A8D3 (+2, also BRK) -> 217 live
+extended_prefix   = 0xB7
+ext_interpreter   = 0xAB35   # pushes #$A2DE so ext handlers RTS to the loop head
+extended_table    = 0xAB4D   # 48 words ($AB4D..$ABAC); ext[0]=$0000 null (BRK); 47 live $01-$2F; bytes >= $30 invalid
+syscall_table     = 0x9753   # 99 entries ($00-$62), 98 distinct ($0D=$0E); ends at mask table $9819
+syscall_count     = 99
+syscall_dispatch  = 0x8D23   # id = $52 & $FF; JSR ($9753,X) at $8D46 (+ Aerobiz-only CMP #$0F / STA $6D)
+run_vm_entry      = 0xA29B   # routine prologue: frame from trampoline word, PC = tramp+5 (= rot3k2 $9A4C / gemfire $A2FC)
+resource_archive  = 0xF000   # 223 rows [name8][bank u16][addr u16][len u32], zero row at $FDF0 (NOT $F800 = row 128)
+loader            = 0x983D   # sys $18 res_open = name search over $F000 (gemfire meaning); copy $9A39 -> DMA ch5 $9AD2
+code_span         = [0x800C, 0xD085]   # recon preview (native_floor with scratch profile): 8,820 insns
+module_bases = { COMMON = 0x1000, ALNMAIN = 0x2000, START = 0x9000, OPENING = 0x9000, RENEWAL = 0x9000, JUDGMENT = 0x9000, ENDING = 0x9000, COMMAND = 0x8C00, DIORAMA = 0xC100, AIRWAY = 0xD000, OPERATE = 0xD000, INFORM = 0xD000, TRADE = 0xD000, INVEST = 0xD000, NEGO = 0xD000, CAMPAIGN = 0xD000, ALGO = 0xD000, SIMULATE = 0xD000, SYSTEM = 0xD000, REPORT = 0xD000, DEMAND = 0xD000, DIORMINF = 0xD000 }
+# operand-fetch helpers: $A8D8 s8 imm; $A8EA s8 frame-rel addr->$00; $A90B imm16; $A913 a16->$00; $A91D s16 frame-rel
+fetch_helpers = { 0xA8D8 = 1, 0xA8EA = 1, 0xA90B = 2, 0xA913 = 2, 0xA91D = 2 }
+# Per-routine trampoline: JSR $1C10 (COMMON's JSL $008000 stub) + signed frame-size word; body at +5. 479 routines.
+routine_sig         = [0x20, 0x10, 0x1C]
+routine_body_offset = 5
+# Two RESIDENT modules (never overlaid): COMMON ($1000, booted by the native reset) and ALNMAIN
+# ($2000, loaded by COMMON). Every overlay calls into both (recon #1 cross-module call census).
+resident_modules = ["COMMON", "ALNMAIN"]
+
+[aerobiz.coresident]
+# Modules co-loaded with a module (beyond the resident pair), so its calls into them resolve.
+# COMMAND ($8C00) loads the $D000-slot command apps and stays in WRAM while they run: 150
+# cross-overlay call sites from them into COMMAND (census: AIRWAY 31, NEGO 35, INFORM 23, OPERATE
+# 18, REPORT 13, CAMPAIGN 10, SIMULATE 7, ALGO 5, TRADE 5, INVEST 2, SYSTEM 1). DIORAMA ($C100) is
+# loaded next to them by COMMAND/OPERATE/NEGO; DIORMINF is loaded by COMMAND beside DIORAMA.
+# The census shows no other cross-overlay edges (the $9000-slot modules and DEMAND call only the
+# resident pair), so no other module needs an entry.
+AIRWAY   = ["COMMAND", "DIORAMA"]
+OPERATE  = ["COMMAND", "DIORAMA"]
+INFORM   = ["COMMAND", "DIORAMA"]
+TRADE    = ["COMMAND", "DIORAMA"]
+INVEST   = ["COMMAND", "DIORAMA"]
+NEGO     = ["COMMAND", "DIORAMA"]
+CAMPAIGN = ["COMMAND", "DIORAMA"]
+ALGO     = ["COMMAND", "DIORAMA"]
+SIMULATE = ["COMMAND", "DIORAMA"]
+SYSTEM   = ["COMMAND", "DIORAMA"]
+REPORT   = ["COMMAND", "DIORAMA"]
+DIORMINF = ["COMMAND", "DIORAMA"]
+DIORAMA  = ["COMMAND"]

@@ -1,0 +1,338 @@
+# ============================================================================
+# KOEI SNES bytecode VM -- the shared opcode table (ONE source of truth).
+#
+# Per opcode: the listing NAME, the control-flow class (cf), the operand LAYOUT, a lift
+# template (c) and a description. Every tool loads this file through tools/vm_isa.py; no tool
+# keeps its own opcode names, control-flow sets, operand sizes or C renderings.
+#
+# The handlers are relocation-invariant IDENTICAL in rot3k2, Gemfire and Aerobiz (303/304; the
+# one difference is the loop-return constant the $B7 dispatcher pushes). Verified by the Aerobiz
+# recon #1 (handler code read by hand AND executed on a 65C816 emulator: 335/335 PC-advance
+# checks) -- AeroBiz-decompiler/data/opcode_table.txt is the evidence table.
+#
+# SIZES ARE NOT TRUSTED FROM HERE. vm_opcodes.py derives every operand size from the target
+# ROM's own handler code (all paths) and vm_isa.bind() RAISES if a derived size or class
+# disagrees with this table. The layout below names the operand fields; the ROM decides the width.
+#
+# Register/frame model (direct page):
+#   regA = $0A   regC = $0E   FP = $04   PC = $06-$08 (24-bit: [$06],Y fetches)   $00-$02 scratch
+#   32-bit: L = $0A-$0D (low word IS regA)   R = $0E-$11 (low word IS regC)
+#           W = $12-$15 (mul32 high half / udiv32 remainder)
+#   There is NO independent regB: $0C-$0D is L's high word / scratch.
+#   Operand stack = the 65C816 stack (PHA/PLA). Handlers enter with Y=0, m16/x16.
+#
+# Operand notation (layout field types, byte counts in parentheses; each opcode's total is
+# checked against the size its ROM handler consumes):
+#   f8 / f16  signed frame offset n (1/2): address = FP+n+1 if n<0 (locals), FP+n+4 if n>=0 (args)
+#   a16       absolute address (2), bank $7E: a global for loads/stores, a bytecode target for
+#             jumps / switch cases / calls
+#   s8        signed immediate (1), sign-extended ("#i8" in names)   i16 16-bit immediate (2)
+#   s16/u16   signed / unsigned 16-bit field (2)                     i32 32-bit immediate (4)
+#   r8        signed displacement (1) from the NEXT instruction      e8  extended opcode byte (1)
+#   role:type names a field; "(...)*n" / "type*n" repeats n times (n = an earlier u16 field).
+#
+# Lift template (c), read by tools/vm_lift.py + vm_struct.py: "A"/"C" = regA/regC (and L/R for
+# the 32-bit ops, whose low words they are), {o} = the operand (frame var / global / immediate),
+# &{o} = its address, {slot} / {n} = a range's implicit frame slot / nibble, pop / pop32 = the
+# operand stack (2 / 4 bytes). Steps are separated by ";" and run in order. Step forms:
+#   "A = expr" / "C = expr"      register assignment      "push expr" / "push32 expr"
+#   "lvalue = A"                 a store: {o}, {slot}, memb[&{o}] (byte), mem32[&{o}] (32-bit),
+#                                or through a pointer: mem[..] / memb[..] / mem32[..]
+#   "f(args)"                    a statement with memory side effects (blkcopy, stbf)
+#   "swap", "nop", "sp_adj {o}"  (SP += operand: pops / reserves operand-stack bytes)
+# Widths and signedness are explicit: memb[] / mem32[] accesses; casts on an OPERATION's operands
+# give its signedness -- (u16) / (u32) unsigned, (s32) signed 32-bit (a 16-bit op without a cast is
+# signed); (u32)(u16)x / (s32)(s16)x are the zero / sign EXTENSIONS (zext32 / sign32), so a C reader
+# never mistakes a conversion for the signedness of the op that consumes it. The lifter adds
+# (word)(...) where a 16-bit consumer reads a 32-bit value (from the ROM-derived register bytes, not
+# from here). The templates are ALSO the lifter's register model (which
+# op reads / writes regA and regC -- liveness of call results, values at joins), so they state
+# every register side effect the handler has (e.g. $B1 leaves the popped pointer in regC).
+# For a cjmp/cbra op, c is the condition under which the branch is TAKEN ("!A" = regA == 0).
+# Ops without c (calls, branches, switches, ret) are rendered from their cf class.
+#
+# Control-flow classes (cf):
+#   none    falls through                   call    call + fall through (target a16 or regA)
+#   jmp     goto target                     ret     return to caller (no fall-through)
+#   cjmp    target if cond, else fall       switch  inline jump/case table; never falls through
+#   bra     goto PC+r8                      prefix  $B7: the next byte selects an [extended] op
+#   cbra    PC+r8 if cond, else fall        (dead opcodes are listed under [dead])
+# ============================================================================
+#
+# CHANGELOG (2026-09-30) -- corrected against the verified table; old name -> new name, reason.
+# ("tool:" = the string tools/vm_disasm.py printed, where it differed from this file.)
+# Names are now stored exactly as listings print them (mnemonic padded to 6 + operand notation,
+# the form vm_disasm.py always printed); padding-only differences are not listed. Control-flow and
+# call ops carry no operand notation in the name -- listings annotate the resolved target instead.
+#  $D6 jmp a16 -> jmp ; $AC call.n a16 -> call.n : notation only (the tools always printed these).
+#  $80 (unlisted)                        : dead -- handler = invalid_handler (BRK).
+#  $81-$88 ldA/ldC/stA/push g8|g16 -> ... f8|f16 : operand is a FRAME offset (FP-relative), not a global.
+#  $A0-$A3 ldA.b/ldC.b/stA.b/push.b L -> ... f16 : notation only -- frame-relative, "L" dropped (it also named A4-AB).
+#  $A4 ldA.w L -> ldA a16 ; $A6 ldC.w L -> ldC a16 ; $A8 stA.w L -> stA a16 ; $AA push.w L -> push a16
+#                                        : ABSOLUTE a16 (global, DB=$7E), not frame-local.
+#  $A5 ldA.b L' -> ldA.b a16 ; $A7 ldC.b L -> ldC.b a16 ; $A9 stA.b L -> stA.b a16 ; $AB push.b L -> push.b a16
+#                                        : ABSOLUTE a16 byte (A7's old name also duplicated A1's).
+#  $B6 sdivmod -> sdiv   : returns the signed QUOTIENT only.
+#  $B8 udivmod -> udiv   : returns the unsigned QUOTIENT (remainder left in $00).
+#  $B9 sdiv    -> smod   : returns the signed REMAINDER (sign of the dividend).
+#  $BA udiv    -> umod   : returns the unsigned REMAINDER.
+#  $BD mul     -> shl    : regA <<= regC (shift loop); the multiply is $B5 mul16.
+#  $D2 shl     -> shl1   : name freed for $BD; semantics unchanged (ASL regA once).
+#  $C2 ge.s -> lt.s ; $C3 gt.s -> le.s ; $C4 le.s -> gt.s ; $C5 lt.s -> ge.s
+#                                        : the old names were the COMPLEMENT of what the handlers compute.
+#  $C6 ge.u -> lt.u ; $C7 gt.u -> le.u ; $C8 le.u -> gt.u ; $C9 lt.u -> ge.u   : same, unsigned.
+#  $D7 skipnz -> jnz     : jumps to a16 when regA != 0, else skips the operand (description was inverted).
+#  $D8 brz r8 -> jz      : ABSOLUTE jz a16 (2-byte operand). The unreachable fall-through after the
+#                          BEQ/BNE pair is $E3's code, which is why a fall-through-only read said "r8".
+#  $E3 brel r8' -> bra ; $E6 brel r8 -> bra'          (tool: E3 "brel", E6 "brel'")
+#  $E4 brnz r8  -> bnz ; $E7 brnz r8' -> bnz'
+#  $E5 brz r8'  -> bz  ; $E8 switch3  -> bz'          : E8 is bz r8 (copy of E5), not a switch.
+#                          Family renamed with the D8/E8 fixes (bra/bnz/bz next to jmp/jnz/jz);
+#                          unprimed = E3-E5, primed = the second handler copy E6-E8.
+#  $DE ldA g16' -> leaA f16 ; $DF ldC g16' -> leaC f16 : regA/regC = FP-relative ADDRESS (lea), not a load.
+#  $E0 mul32 #  -> ldbf.s #i16 ; $E1 sdiv32 # -> ldbf.u #i16 ; $E2 udiv32 # -> stbf #i16
+#                                        : bitfield extract (signed/unsigned) / insert; no 32-bit math.
+#  $E9 hostcall a16,i8 -> call.p          : call a16, then pop s8 argument bytes (cdecl caller cleanup).
+#                                          Also the syscall form (target = the native syscall stub).
+#  $AC call.n                             : description fixed (calls a bytecode routine via its
+#                                          trampoline, or a native stub; "n" = no argument pop).
+#  $AD blkcopy                            : name kept; as coded Y never increments (copies byte 0 n times).
+#  $FF (listed as a $A082 nop slot)       : its own entry = invalid_handler+2, also BRK -> dead.
+#  ext $02 smul32  -> sdiv32   : signed DIVIDE (quotient).
+#  ext $0C ldW g16 -> ldL f16 ; $0D ldW2 g16 -> ldR f16 ; $0E stW g16 -> stL f16 ; $0F push32 g16 -> push32 f16
+#                              : FRAME-relative; the register is L ($0A-$0D) / R ($0E-$11), not W.
+#  ext $10 ldW.b L -> ldL a16 ; $11 ldW2.b L -> ldR a16 ; $12 stW L -> stL a16 ; $13 push32 L -> push32 a16
+#                              : ABSOLUTE a16, 32-bit (not .b); register L/R.
+#  ext $14 stW.p   -> push32 L : pushes L ($0A-$0D); not a store.
+#  ext $16 stW.pA  -> ldL.mem  : L = *(u32*)regA (a load via regA).
+#  ext $17 pop32'  -> stL[pop] : *(u32*)pop = L (store via a popped pointer).
+#  ext $18 ldW #i32 -> ldL #i32 ; $19 ldW2 #i32 -> ldR #i32 : register letter (loads L / R).
+#  ext $1B add32r  -> inc32 ; $1C add32c -> dec32
+#  ext $1D cmp.s32 -> test32   : regA = (L != 0).
+#  ext $1E smul32' -> smod32 ; $1F neg32' -> shl32 ; $20 abs32 -> sar32 ; $21 xor32 -> not32
+#  ext $24 xor32'  -> xor32    : prime dropped (the old unprimed "xor32" was $21 = not32).
+#  ext $26 clrW2   -> zext32   : L = (u32)regA.
+#  ext $28 cmp32   -> test32'  : JSR test32 then EOR #1 whose result is never stored -> as coded = test32.
+#  ext $29 ge.u32 -> lt.u32 ; $2A lt.u32 -> le.u32 ; $2B le.u32 -> gt.u32 ; $2C gt.u32 -> ge.u32 : complement names.
+#  ext $2D add32'  -> shr32 ; $2E div32 -> udiv32 (remainder -> W) ; $2F smul32'' -> umod32
+# Listing change (not a rename): tools/gen_source.py used to print every ext op as op_B7; it now
+# prints the ext op's own name (e.g. "ldL    local5 [fp-$0B]") with its operand values.
+#
+# TEMPLATES (2026-09-30, repair round 1) -- lift templates only, no name changes:
+#  $B1/$D4/ext $17 : "C = pop; mem[C] = A" -- the handlers PLA; STA $0E: the popped pointer stays in regC.
+#  $B6/$B9         : + "; C = abs(C)" -- the sign prep (Aerobiz $A766) leaves |regC| in regC.
+#  $B8/$BA/$BE, $C6-$C9 and the unsigned 32-bit ops : (u16) / (u32) casts (unsigned operations).
+#  $A0-$A3/$A5/$A7/$A9/$AB : memb[&{o}] (byte access); ext $0C-$13 : mem32[&{o}] (32-bit access).
+#  $AD blkcopy, $AE/$AF sp_adj, $E0-$E2 bitfields : templates added (they had none).
+#  $70             : own entry, c = "nop" (name unchanged "addA   #$0"): its handler is JMP loop.
+#  ext $02/$1E     : + "; C = abs(C)" -- the 32-bit sign prep (Aerobiz $ABE1) negates a negative R in place.
+#  ext $1F/$20/$2D : + "; C = ((s32)C < 0 ? (C - 1) : -1)" -- R is the shift loop's down-counter.
+#
+# TEMPLATES (2026-09-30, repair round 2) -- C signedness made unambiguous, no name changes:
+#  ext $02 sdiv32, $1E smod32, $08-$0B lt.s32/le.s32/gt.s32/ge.s32, $20 sar32 : (s32) operand casts
+#                  (signed ops; under C's usual conversions a (u32) operand made them read unsigned).
+#  ext $26 zext32 "(u32)A" -> "(u32)(u16)A" ; ext $25 sign32 "(s32)A" -> "(s32)(s16)A" : explicit
+#                  zero / sign extension, distinct from the (u32) marker of an unsigned operation.
+# Branch POLARITY is now ROM-checked too: bind() derives which regA value (== 0 / != 0) takes each
+# cjmp / cbra handler's PC write and compares it with c ("A" / "!A").
+# Every template's regA / regC (L / R) reads and writes are checked against the handler code by
+# vm_isa.bind() (vm_opcodes tracks the register bytes each handler reads / writes on all paths).
+# ============================================================================
+
+[meta]
+prefix    = 0xB7              # the extended-opcode prefix (primary op whose handler = ext_interpreter)
+ext_count = 48                # extended table entries $00-$2F; ext bytes >= $30 index past it (invalid)
+
+[primary_ranges]              # 0-operand; the low nibble n is baked into the opcode
+# frame matrix slot n: n=0-B -> FP-23..FP-1 (locals, step 2); n=C-F -> FP+$0F,$11,$13,$15 (args)
+"00-0F" = { name = "load    fA[{n}]", cf = "none", layout = "", c = "A = {slot}", desc = "regA = frame slot n" }
+"10-1F" = { name = "load    fC[{n}]", cf = "none", layout = "", c = "C = {slot}", desc = "regC = frame slot n" }
+"20-2F" = { name = "store   fA[{n}]", cf = "none", layout = "", c = "{slot} = A", desc = "frame slot n = regA" }
+"30-3F" = { name = "push    f[{n}]",  cf = "none", layout = "", c = "push {slot}", desc = "push frame slot n" }
+# $40-$7F: four distinct nibble-immediate handlers (the old single "loadc" label was wrong)
+"40-4F" = { name = "ldA    #${n}",   cf = "none", layout = "", c = "A = {n}", desc = "regA = n" }
+"50-5F" = { name = "ldC    #${n}",   cf = "none", layout = "", c = "C = {n}", desc = "regC = n" }
+"60-6F" = { name = "push   #${n}",   cf = "none", layout = "", c = "push {n}", desc = "push n (syscall ids ride here)" }
+"71-7F" = { name = "addA   #${n}",   cf = "none", layout = "", c = "A = (A + {n})", desc = "regA += n" }
+
+[primary]
+0x70 = { name = "addA   #$0", cf = "none", layout = "", c = "nop", desc = "regA += 0: the handler is JMP loop (a no-op; regA untouched)" }
+# --- frame-relative word load / store / push ---
+0x81 = { name = "ldA    f8",   cf = "none", layout = "f8", c = "A = {o}",  desc = "regA = *(u16*)frame(n)" }
+0x82 = { name = "ldA    f16",  cf = "none", layout = "f16", c = "A = {o}", desc = "regA = *(u16*)frame(n)" }
+0x83 = { name = "ldC    f8",   cf = "none", layout = "f8", c = "C = {o}",  desc = "regC = *(u16*)frame(n)" }
+0x84 = { name = "ldC    f16",  cf = "none", layout = "f16", c = "C = {o}", desc = "regC = *(u16*)frame(n)" }
+0x85 = { name = "stA    f8",   cf = "none", layout = "f8", c = "{o} = A",  desc = "*(u16*)frame(n) = regA" }
+0x86 = { name = "stA    f16",  cf = "none", layout = "f16", c = "{o} = A", desc = "*(u16*)frame(n) = regA" }
+0x87 = { name = "push   f8",   cf = "none", layout = "f8", c = "push {o}",  desc = "push *(u16*)frame(n)" }
+0x88 = { name = "push   f16",  cf = "none", layout = "f16", c = "push {o}", desc = "push *(u16*)frame(n)" }
+# --- immediates ---
+0x89 = { name = "ldA    #i8",  cf = "none", layout = "s8", c = "A = {o}",  desc = "regA = (s8)imm" }
+0x8A = { name = "ldA    #i16", cf = "none", layout = "i16", c = "A = {o}", desc = "regA = imm16" }
+0x8B = { name = "ldC    #i8",  cf = "none", layout = "s8", c = "C = {o}",  desc = "regC = (s8)imm" }
+0x8C = { name = "ldC    #i16", cf = "none", layout = "i16", c = "C = {o}", desc = "regC = imm16" }
+0x8D = { name = "push   #i8",  cf = "none", layout = "s8", c = "push {o}",  desc = "push (s8)imm" }
+0x8E = { name = "push   #i16", cf = "none", layout = "i16", c = "push {o}", desc = "push imm16" }
+0x8F = { name = "addA   #i8",  cf = "none", layout = "s8", c = "A = (A + {o})",  desc = "regA += (s8)imm" }
+0x90 = { name = "addA   #i16", cf = "none", layout = "i16", c = "A = (A + {o})", desc = "regA += imm16" }
+# --- frame-relative byte ops (zero-extended loads) ---
+0xA0 = { name = "ldA.b  f16",  cf = "none", layout = "f16", c = "A = memb[&{o}]", desc = "regA = *(u8*)frame(n)" }
+0xA1 = { name = "ldC.b  f16",  cf = "none", layout = "f16", c = "C = memb[&{o}]", desc = "regC = *(u8*)frame(n)" }
+0xA2 = { name = "stA.b  f16",  cf = "none", layout = "f16", c = "memb[&{o}] = A", desc = "*(u8*)frame(n) = regA" }
+0xA3 = { name = "push.b f16",  cf = "none", layout = "f16", c = "push memb[&{o}]", desc = "push *(u8*)frame(n)" }
+# --- absolute (global, bank $7E) word / byte ops ---
+0xA4 = { name = "ldA    a16",  cf = "none", layout = "a16", c = "A = {o}", desc = "regA = *(u16*)a16" }
+0xA5 = { name = "ldA.b  a16",  cf = "none", layout = "a16", c = "A = memb[&{o}]", desc = "regA = *(u8*)a16" }
+0xA6 = { name = "ldC    a16",  cf = "none", layout = "a16", c = "C = {o}", desc = "regC = *(u16*)a16" }
+0xA7 = { name = "ldC.b  a16",  cf = "none", layout = "a16", c = "C = memb[&{o}]", desc = "regC = *(u8*)a16" }
+0xA8 = { name = "stA    a16",  cf = "none", layout = "a16", c = "{o} = A", desc = "*(u16*)a16 = regA" }
+0xA9 = { name = "stA.b  a16",  cf = "none", layout = "a16", c = "memb[&{o}] = A", desc = "*(u8*)a16 = regA" }
+0xAA = { name = "push   a16",  cf = "none", layout = "a16", c = "push {o}", desc = "push *(u16*)a16" }
+0xAB = { name = "push.b a16",  cf = "none", layout = "a16", c = "push memb[&{o}]", desc = "push *(u8*)a16" }
+# --- calls / stack frame ---
+0xAC = { name = "call.n",      cf = "call", layout = "target:a16",          desc = "call a16 (JML $7E:a16 via the launcher; no argument pop; PC restored by the callee's ret)" }
+0xAD = { name = "blkcopy",     cf = "none", layout = "i16", c = "blkcopy(C, A, {o})", desc = "block copy n16 bytes (regA)->(regC); as coded Y never increments, so byte 0 is copied n times" }
+0xAE = { name = "sp_adj #i8",  cf = "none", layout = "s8",  c = "sp_adj {o}",         desc = "SP += (s8)imm (reserve / free stack)" }
+0xAF = { name = "sp_adj #i16", cf = "none", layout = "i16", c = "sp_adj {o}",         desc = "SP += imm16" }
+# --- pointer / stack / register ---
+0xB0 = { name = "ldA.mem",     cf = "none", layout = "", c = "A = mem[A]", desc = "regA = *(u16*)regA" }
+0xB1 = { name = "stA.w[pop]",  cf = "none", layout = "", c = "C = pop; mem[C] = A", desc = "*(u16*)pop = regA (regC = the popped pointer)" }
+0xB3 = { name = "pushA",       cf = "none", layout = "", c = "push A", desc = "push regA" }
+0xB4 = { name = "popC",        cf = "none", layout = "", c = "C = pop", desc = "regC = pop" }
+0xB5 = { name = "mul16",       cf = "none", layout = "", c = "A = (A * C)", desc = "regA = lo16(regA * regC); hi16 left in $00" }
+0xB6 = { name = "sdiv",        cf = "none", layout = "", c = "A = (A / C); C = abs(C)", desc = "regA = regA / regC (signed quotient); the sign prep leaves regC = |regC|" }
+0xB7 = { name = "ext",         cf = "prefix", layout = "e8", desc = "extended prefix: the next byte selects an [extended] op; length = 2 + its operand" }
+0xB8 = { name = "udiv",        cf = "none", layout = "", c = "A = ((u16)A / (u16)C)", desc = "regA = regA / regC (unsigned quotient; remainder left in $00)" }
+0xB9 = { name = "smod",        cf = "none", layout = "", c = "A = (A % C); C = abs(C)", desc = "regA = regA % regC (signed; sign of the dividend); leaves regC = |regC|" }
+0xBA = { name = "umod",        cf = "none", layout = "", c = "A = ((u16)A % (u16)C)", desc = "regA = regA % regC (unsigned)" }
+# --- ALU: regA = regA OP regC ---
+0xBB = { name = "add",  cf = "none", layout = "", c = "A = (A + C)", desc = "regA += regC" }
+0xBC = { name = "sub",  cf = "none", layout = "", c = "A = (A - C)", desc = "regA -= regC" }
+0xBD = { name = "shl",  cf = "none", layout = "", c = "A = (A << C)", desc = "regA <<= regC (shift loop)" }
+0xBE = { name = "shr",  cf = "none", layout = "", c = "A = ((u16)A >> C)", desc = "regA >>= regC (logical)" }
+0xBF = { name = "sar",  cf = "none", layout = "", c = "A = (A >> C)", desc = "regA >>= regC (arithmetic)" }
+0xDA = { name = "and",  cf = "none", layout = "", c = "A = (A & C)", desc = "regA &= regC" }
+0xDB = { name = "or",   cf = "none", layout = "", c = "A = (A | C)", desc = "regA |= regC" }
+0xDC = { name = "xor",  cf = "none", layout = "", c = "A = (A ^ C)", desc = "regA ^= regC" }
+# --- compares: regA = 0/1 ---
+0xC0 = { name = "eq",   cf = "none", layout = "", c = "A = (A == C)", desc = "regA = (regA == regC)" }
+0xC1 = { name = "ne",   cf = "none", layout = "", c = "A = (A != C)", desc = "regA = (regA != regC)" }
+0xC2 = { name = "lt.s", cf = "none", layout = "", c = "A = (A < C)", desc = "regA = (regA < regC) signed [N of A-C]" }
+0xC3 = { name = "le.s", cf = "none", layout = "", c = "A = (A <= C)", desc = "regA = (regA <= regC) signed [!N of C-A]" }
+0xC4 = { name = "gt.s", cf = "none", layout = "", c = "A = (A > C)", desc = "regA = (regA > regC) signed [N of C-A]" }
+0xC5 = { name = "ge.s", cf = "none", layout = "", c = "A = (A >= C)", desc = "regA = (regA >= regC) signed [!N of A-C]" }
+0xC6 = { name = "lt.u", cf = "none", layout = "", c = "A = ((u16)A < (u16)C)", desc = "regA = (regA < regC) unsigned" }
+0xC7 = { name = "le.u", cf = "none", layout = "", c = "A = ((u16)A <= (u16)C)", desc = "regA = (regA <= regC) unsigned" }
+0xC8 = { name = "gt.u", cf = "none", layout = "", c = "A = ((u16)A > (u16)C)", desc = "regA = (regA > regC) unsigned" }
+0xC9 = { name = "ge.u", cf = "none", layout = "", c = "A = ((u16)A >= (u16)C)", desc = "regA = (regA >= regC) unsigned" }
+# --- unary ---
+0xCA = { name = "lnot",   cf = "none", layout = "", c = "A = (!A)", desc = "regA = (regA == 0)" }
+0xCB = { name = "neg",    cf = "none", layout = "", c = "A = (-A)", desc = "regA = -regA" }
+0xCC = { name = "not",    cf = "none", layout = "", c = "A = (~A)", desc = "regA = ~regA" }
+0xCD = { name = "swapAC", cf = "none", layout = "", c = "swap", desc = "swap regA <-> regC" }
+0xD0 = { name = "inc",    cf = "none", layout = "", c = "A = (A + 1)", desc = "regA += 1" }
+0xD1 = { name = "dec",    cf = "none", layout = "", c = "A = (A - 1)", desc = "regA -= 1" }
+0xD2 = { name = "shl1",   cf = "none", layout = "", c = "A = (A << 1)", desc = "regA <<= 1" }
+0xD3 = { name = "ldA.b[p]",   cf = "none", layout = "", c = "A = memb[A]", desc = "regA = *(u8*)regA" }
+0xD4 = { name = "stA.b[pop]", cf = "none", layout = "", c = "C = pop; memb[C] = A", desc = "*(u8*)pop = regA (regC = the popped pointer)" }
+# --- address-of ---
+0xDE = { name = "leaA   f16", cf = "none", layout = "f16", c = "A = &{o}", desc = "regA = &frame(n) (FP-relative address)" }
+0xDF = { name = "leaC   f16", cf = "none", layout = "f16", c = "C = &{o}", desc = "regC = &frame(n)" }
+# --- bitfields (never reached in rot3k2, Gemfire or Aerobiz bytecode) ---
+0xE0 = { name = "ldbf.s #i16", cf = "none", layout = "i16", c = "A = ldbf_s(mem[A], {o})", desc = "signed bitfield extract from *(regA) (Aerobiz helper $AEE7 = $AEB8 + sign-extend); i16 = field spec. As coded the helper reads its pointer from DP[X] with X = the opcode (TYA where TYX was meant)" }
+0xE1 = { name = "ldbf.u #i16", cf = "none", layout = "i16", c = "A = ldbf_u(mem[A], {o})", desc = "unsigned bitfield extract from *(regA), mask (1<<lo)-1; i16 = field spec (same helper quirk as $E0)" }
+0xE2 = { name = "stbf   #i16", cf = "none", layout = "i16", c = "stbf(C, A, {o}); A = bf_bits(A, {o})", desc = "bitfield insert of regA into *(regC); i16 = field spec; leaves regA = the shifted, masked field bits" }
+# --- control flow ---
+0xD5 = { name = "switch",  cf = "switch", layout = "bias:s16 n:u16 default:a16 case:a16*n",       desc = "jump table: idx = regA + bias (regA updated); idx < n (unsigned) -> case[idx], else default" }
+0xD6 = { name = "jmp",     cf = "jmp",    layout = "target:a16", desc = "PC = a16" }
+0xD7 = { name = "jnz",     cf = "cjmp",   layout = "target:a16", c = "A", desc = "if regA != 0: PC = a16; else skip the operand" }
+0xD8 = { name = "jz",      cf = "cjmp",   layout = "target:a16", c = "!A", desc = "if regA == 0: PC = a16; else skip the operand" }
+0xD9 = { name = "switch2", cf = "switch", layout = "n:u16 (value:i16 target:a16)*n default:a16", desc = "case list: linear search of the n values for regA -> its target, else default" }
+0xE3 = { name = "bra",     cf = "bra",    layout = "r8", desc = "PC += r8" }
+0xE4 = { name = "bnz",     cf = "cbra",   layout = "r8", c = "A", desc = "if regA != 0: PC += r8" }
+0xE5 = { name = "bz",      cf = "cbra",   layout = "r8", c = "!A", desc = "if regA == 0: PC += r8" }
+0xE6 = { name = "bra'",    cf = "bra",    layout = "r8", desc = "PC += r8 (second copy of $E3)" }
+0xE7 = { name = "bnz'",    cf = "cbra",   layout = "r8", c = "A", desc = "if regA != 0: PC += r8 (copy of $E4)" }
+0xE8 = { name = "bz'",     cf = "cbra",   layout = "r8", c = "!A", desc = "if regA == 0: PC += r8 (copy of $E5)" }
+0xCF = { name = "ret",     cf = "ret",    layout = "",   desc = "SP = FP; pull 10 bytes -> $00..$09 (restores FP, PC); INC $00; JML [$0000]" }
+# --- calls ---
+0xDD = { name = "call.ind",  cf = "call", layout = "",                    desc = "call regA (indirect; no argument pop)" }
+0xE9 = { name = "call.p",    cf = "call", layout = "target:a16 pop:s8",   desc = "call a16, then SP += s8 (pop the argument bytes: cdecl caller cleanup); also the syscall form" }
+0xEA = { name = "call.ind2", cf = "call", layout = "pop:s8",              desc = "call regA, then SP += s8 (pop the argument bytes)" }
+
+[dead]
+# handler = invalid_handler (BRK) -- or invalid_handler+2 for $FF, also a BRK in all three titles
+primary  = [0x80, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9A, 0x9B, 0x9C, 0x9D,
+            0x9E, 0x9F, 0xB2, 0xCE, 0xEB, 0xEC, 0xED, 0xEE, 0xEF, 0xF0, 0xF1, 0xF2, 0xF3, 0xF4,
+            0xF5, 0xF6, 0xF7, 0xF8, 0xF9, 0xFA, 0xFB, 0xFC, 0xFD, 0xFE, 0xFF]
+# ext $00 is a null ($0000) table entry -> wild jump; ext bytes >= meta.ext_count are invalid too
+extended = [0x00]
+
+[extended]                    # via $B7; handlers RTS to the loop. L = $0A-$0D, R = $0E-$11, W = $12-$15
+0x01 = { name = "mul32",      cf = "none", layout = "", c = "A = ((u32)A * (u32)C)",    desc = "unsigned L * R -> L (low 32), W (high 32)" }
+0x02 = { name = "sdiv32",     cf = "none", layout = "", c = "A = ((s32)A / (s32)C); C = abs(C)",    desc = "L = L / R (signed quotient); the sign prep leaves R = |R|" }
+0x03 = { name = "add32",      cf = "none", layout = "", c = "A = (A + C)",    desc = "L += R" }
+0x04 = { name = "sub32",      cf = "none", layout = "", c = "A = (A - C)",    desc = "L -= R" }
+0x05 = { name = "neg32",      cf = "none", layout = "", c = "A = (-A)",    desc = "L = -L" }
+0x06 = { name = "eq32",       cf = "none", layout = "", c = "A = (A == C)",    desc = "regA = (L == R)" }
+0x07 = { name = "ne32",       cf = "none", layout = "", c = "A = (A != C)",    desc = "regA = (L != R)" }
+0x08 = { name = "lt.s32",     cf = "none", layout = "", c = "A = ((s32)A < (s32)C)",    desc = "regA = (L < R) signed" }
+0x09 = { name = "le.s32",     cf = "none", layout = "", c = "A = ((s32)A <= (s32)C)",    desc = "regA = (L <= R) signed" }
+0x0A = { name = "gt.s32",     cf = "none", layout = "", c = "A = ((s32)A > (s32)C)",    desc = "regA = (L > R) signed" }
+0x0B = { name = "ge.s32",     cf = "none", layout = "", c = "A = ((s32)A >= (s32)C)",    desc = "regA = (L >= R) signed" }
+0x0C = { name = "ldL    f16", cf = "none", layout = "f16", c = "A = mem32[&{o}]", desc = "L = *(u32*)frame(n)" }
+0x0D = { name = "ldR    f16", cf = "none", layout = "f16", c = "C = mem32[&{o}]", desc = "R = *(u32*)frame(n)" }
+0x0E = { name = "stL    f16", cf = "none", layout = "f16", c = "mem32[&{o}] = A", desc = "*(u32*)frame(n) = L" }
+0x0F = { name = "push32 f16", cf = "none", layout = "f16", c = "push32 mem32[&{o}]", desc = "push *(u32*)frame(n)" }
+0x10 = { name = "ldL    a16", cf = "none", layout = "a16", c = "A = mem32[&{o}]", desc = "L = *(u32*)a16" }
+0x11 = { name = "ldR    a16", cf = "none", layout = "a16", c = "C = mem32[&{o}]", desc = "R = *(u32*)a16" }
+0x12 = { name = "stL    a16", cf = "none", layout = "a16", c = "mem32[&{o}] = A", desc = "*(u32*)a16 = L" }
+0x13 = { name = "push32 a16", cf = "none", layout = "a16", c = "push32 mem32[&{o}]", desc = "push *(u32*)a16" }
+0x14 = { name = "push32 L",   cf = "none", layout = "", c = "push32 A",    desc = "push L" }
+0x15 = { name = "pop32",      cf = "none", layout = "", c = "C = pop32",    desc = "R = pop32" }
+0x16 = { name = "ldL.mem",    cf = "none", layout = "", c = "A = mem32[A]",    desc = "L = *(u32*)regA" }
+0x17 = { name = "stL[pop]",   cf = "none", layout = "", c = "C = pop; mem32[C] = A",    desc = "*(u32*)pop = L (regC = the popped pointer)" }
+0x18 = { name = "ldL    #i32", cf = "none", layout = "i32", c = "A = {o}", desc = "L = imm32 (reads [$06],Y at Y=0,2; then PC += 3 + C, C=1 from CPY #4)" }
+0x19 = { name = "ldR    #i32", cf = "none", layout = "i32", c = "C = {o}", desc = "R = imm32 (same +4 advance)" }
+0x1A = { name = "swap32",     cf = "none", layout = "", c = "swap",    desc = "swap L <-> R" }
+0x1B = { name = "inc32",      cf = "none", layout = "", c = "A = (A + 1)",    desc = "L += 1" }
+0x1C = { name = "dec32",      cf = "none", layout = "", c = "A = (A - 1)",    desc = "L -= 1" }
+0x1D = { name = "test32",     cf = "none", layout = "", c = "A = (A != 0)",    desc = "regA = (L != 0)" }
+0x1E = { name = "smod32",     cf = "none", layout = "", c = "A = ((s32)A % (s32)C); C = abs(C)",    desc = "L = L % R (signed; sign of the dividend); leaves R = |R|" }
+0x1F = { name = "shl32",      cf = "none", layout = "", c = "A = (A << C); C = ((s32)C < 0 ? (C - 1) : -1)",    desc = "L <<= R (R is the loop's down-counter: ends -1, or R-1 when R < 0)" }
+0x20 = { name = "sar32",      cf = "none", layout = "", c = "A = ((s32)A >> C); C = ((s32)C < 0 ? (C - 1) : -1)",    desc = "L >>= R (arithmetic; R counts down as in shl32)" }
+0x21 = { name = "not32",      cf = "none", layout = "", c = "A = (~A)",    desc = "L = ~L" }
+0x22 = { name = "and32",      cf = "none", layout = "", c = "A = (A & C)",    desc = "L &= R" }
+0x23 = { name = "or32",       cf = "none", layout = "", c = "A = (A | C)",    desc = "L |= R" }
+0x24 = { name = "xor32",      cf = "none", layout = "", c = "A = (A ^ C)",    desc = "L ^= R" }
+0x25 = { name = "sign32",     cf = "none", layout = "", c = "A = (s32)(s16)A",    desc = "L = (s32)regA (sign-extend)" }
+0x26 = { name = "zext32",     cf = "none", layout = "", c = "A = (u32)(u16)A",    desc = "L = (u32)regA (clears $0C-$0D)" }
+0x27 = { name = "nop",        cf = "none", layout = "", c = "nop",    desc = "RTS" }
+0x28 = { name = "test32'",    cf = "none", layout = "", c = "A = (A != 0)",    desc = "JSR test32; LDA $0A; EOR #1 -- never stored, so as coded regA = (L != 0)" }
+0x29 = { name = "lt.u32",     cf = "none", layout = "", c = "A = ((u32)A < (u32)C)",    desc = "regA = (L < R) unsigned" }
+0x2A = { name = "le.u32",     cf = "none", layout = "", c = "A = ((u32)A <= (u32)C)",    desc = "regA = (L <= R) unsigned" }
+0x2B = { name = "gt.u32",     cf = "none", layout = "", c = "A = ((u32)A > (u32)C)",    desc = "regA = (L > R) unsigned" }
+0x2C = { name = "ge.u32",     cf = "none", layout = "", c = "A = ((u32)A >= (u32)C)",    desc = "regA = (L >= R) unsigned" }
+0x2D = { name = "shr32",      cf = "none", layout = "", c = "A = ((u32)A >> C); C = ((s32)C < 0 ? (C - 1) : -1)",    desc = "L >>= R (logical; R counts down as in shl32)" }
+0x2E = { name = "udiv32",     cf = "none", layout = "", c = "A = ((u32)A / (u32)C)",    desc = "L = L / R (unsigned quotient; remainder -> W)" }
+0x2F = { name = "umod32",     cf = "none", layout = "", c = "A = ((u32)A % (u32)C)",    desc = "L = L % R (unsigned)" }
+
+# ============================================================================
+# NES COMPARISON (checked, NOT derived): koei-nes tools/koeivm/nobunaga_vm.py OPCODE_INFO
+# (the nesdev t=15931 table, cross-checked on NES handlers). Same engine, same opcode bytes:
+#  - Frame/ALU/compare layout matches ($00-$3F frame matrix, $40-$7F quick immediates).
+#  - The NES names confirm every correction above: $81-$88 LOAD/STORE/PUSH_near|far (frame),
+#    $A4-$AB *_abs, $B6/$B8/$B9/$BA SDIV/UDIV/SMOD/UMOD, $BD/$D2 LSHIFT/LSHIFT1,
+#    $C2-$C9 SCMPLT/SCMPLE/SCMPGT/SCMPGE/UCMPLT/UCMPLE/UCMPGT/UCMPGE, $D7/$D8 JUMPT/JUMPF_abs,
+#    $DE/$DF LEAL/LEAR_far, $E0-$E2 SLOADBF/ULOADBF/STOREBF, $E3-$E5 / $E6-$E8
+#    JUMP/JUMPT/JUMPF _back / _ahead, $D5 SWITCH_contig, $D9 SWITCH_noncontig.
+#  - $E9 = CALL_abs_imm1 (word + stack-adjust byte) on BOTH = call.p here. "Host-call" is only
+#    the syscall USE of it (koei-nes vm_decompile renders an $E9 to a host stub as host_call).
+#  - $B7 extended prefix -> a 32-bit subtable on BOTH (47 live ops).
+#  - Counts: SNES 217 live primary (incl. the $B7 prefix) + 39 dead (38 at invalid_handler,
+#    $FF at invalid_handler+2); 47 live extended ($01-$2F) + the null ext $00.
+#  - Drift (NES sizes per OPCODE_INFO, not re-verified here): $E0-$E2 take a 1-byte field
+#    spec on NES vs i16 on SNES; $AD COPY_imm2 is listed with 4 operand bytes on NES vs 2 here.
+#  - On NES $E3-$E5 are the "back" and $E6-$E8 the "ahead" branches; the SNES handler copies
+#    both sign-extend r8 identically, so here the pairs differ only by opcode byte.
+# ============================================================================
