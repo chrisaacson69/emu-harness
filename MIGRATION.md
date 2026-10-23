@@ -334,6 +334,73 @@ fail on a planted violation).
 **Row A is complete:** label export (A), valid registries (A2), and labels applied to listings
 (A3) each have one implementation.
 
+## Row H1 done: one call graph for the KOEI NES titles (2026-10-23)
+
+Chris: the call graph "is what structures the code for proper inference". Who calls whom sets the
+bottom-up order a walk names routines in.
+
+**Shared IR: `passes/callgraph.py`.** The graph is host-neutral:
+- **Nodes** are `(bank, addr)`, a routine's entry in its owning bank.
+- **Edges** carry kinds (`call` / `jsr` / `jmp` / `bankcall` / `bankrun` / `dispatch`), plus data
+  edges.
+- **Roots** are vectors and dispatch tables, so an orphan means nothing calls it and no root
+  reaches it.
+- **Queries:** callers, callees, orphans, `leaves_first` (routines) and `bank_order` (banks).
+
+**The KOEI NES builder: `vm/koei/nes/callgraph.py`.** It builds from the bytes, never from listing
+text:
+- **Bytecode `CALL`s:** decoded through the ISA (`cf = "call"`). The owner is the bank the window
+  model maps there: the caller's own bank, a pinned bank, or the single bank with a stub exactly
+  at the target, ties broken by `coresident_<bank>`. Otherwise the call is reported.
+- **Bank-crossing calls:** the trampoline (`bankcall_fn`), the run-bank syscall, `memcpy_banked`
+  and GemFire's mode table. A call counts only when its *decoded* target is that native's address.
+  The constant arguments come from the decompiler's raw C line for the call, via its `collect`
+  hook: the first line from the call to the next call of the same native.
+  - Conventions are profile data: `[<title>.callgraph]` `bankrun` / `dataload` / `dispatch` /
+    `tables`.
+  - `titles.decompiler_for` is the one decompiler setup (`decompile` uses it; NES 889/889
+    identical).
+- **Natives:** the fixed bank's routines are nodes too, being the leaves. They come from
+  `native_floor`'s enumeration plus the natives only bytecode calls, which LEmp had hand-listed as
+  `extra_seeds`. The row-B descent walks them for JSR and tail-JMP edges.
+- **Roots:** `native_floor.seed_groups`. `seeds()` is now their union, and `native_floor`'s 21
+  outputs are identical.
+- **Profile additions:** `[na1.native_floor]` (23 syscalls; ext-op table `$F261` × 48, measured
+  from `ext_op_dispatch`'s `lda $F261,x`), `[ro3k.native_floor]` (30 syscalls, 48 ext ops),
+  `[na1.callgraph]` (the command-driver table, bank 1 `$B9B2` × 34, ROM-verified against
+  `command-table.txt`).
+
+**All 9 NES titles build** with 0–15 unresolved calls each, each one reported with its reason
+(two banks with a stub at the target, or a bank switch the code makes at run time).
+
+**Folded, against each old output** (every old-only edge was traced to a cause):
+
+| old | now | oracle |
+|---|---|---|
+| bk `bank_callgraph` (broken: shelled out to `py -3`, which cannot import emu-harness; run for the oracle with py -3.14) | thin CLI: `--banks --bank-order` | trampoline / run-bank / fixed-bank / co-resident / `memcpy_banked` edges ⊇ old; data edges equal (22/22) |
+| GemFire `call_hierarchy` | thin CLI: `--banks --indegree` | ⊇ old, except 5 edges the old tool mis-owned: when two `$8000` banks had a stub at the target it took whichever its set iteration met first (bank 0); the profile's co-residency says 4 / 9 |
+| UW `call_graph` | thin CLI: `--indegree --banks` | ⊇ old, except bank 25 → 1. Bank 25 runs at `$A000` itself, so its `$Axxx` calls are its own; the old rule was "`$Axxx` = bank 1" |
+| rot3k2 `bank_hierarchy` | thin CLI: `--banks` | ⊇ old |
+| NA1 `native-call-index` | thin CLI (`callers` / `calls` / `orphans` / `stats`) | bytecode calls ⊇ old (+ bank 14). Fixed-bank JSR targets ⊇ old, except 7 false ones (bytecode subs' bytes parsed as 6502: `format_string → $81D4`), a stub's own `JSR vm_entry`, and `$8000` (after a bank switch: reported unresolved). Roots ⊇ old. Orphans are routines now (the old universe held data and interior labels) |
+
+**What the old graphs missed:**
+- **`CALL_abs_imm1`**, the call form that carries arguments. The regex `CALL[_a-z]*\s+\$` cannot
+  match it, because the `1` in `imm1` breaks it. That hid bk's calls into `rand_mod` / `muldiv`
+  and others.
+- **Trampoline and syscall edges whose target is already named.** The tools grepped the annotated
+  C, where the decompiler has rewritten those into direct calls (rot3k2's tool said so). So they
+  lost an edge each time a target got a name, which is backwards for a walk-ordering tool.
+- **Finding:** UW `docs/10-call-graph.md`'s "ZERO subsystem→subsystem edges" holds for direct
+  calls only. Through `call_in_bank_dcd1`, 34 subsystem → subsystem edges exist (e.g. bank 18
+  `$83BB` → bank 29 `$872B`). Revisit row below.
+
+**Stays in its title:** NA1 `driver-call-index`, a per-driver formula-decode aid over bank 1.
+
+**H2 (next):** move koei-snes `vm_callgraph` (already in emu-harness), snes-decompiler
+`native_callgraph` and Mappy `call_graph` onto `passes/callgraph`. Each keeps its own edge
+extraction (host-specific), but their three orderings (leaves / frontier, Tarjan SCC, DFS
+post-order) become the shared one, each proved against its old report.
+
 ## Row D done: one native-floor tool (2026-10-22)
 
 **Shape.** The 7 copies were not one algorithm with per-title constants: they were 7 stages of
@@ -987,6 +1054,9 @@ finished toolset, not just the items below.
 | ro3k-decompiler | Committed `2-asm-vm` / `4-c` came from the old `vm_disasm_rotk` / `vm_decompile_rotk`: banner names the NA1 ROM, the C uses NA1's ext-op addresses and province field names and unnamed syscalls. A regeneration with the driver (the wrappers now run it) fixes them. | row F3 |
 | na1-decompiler | `nobunaga/vm-opcodes.toml` is a legacy opcode table (the old spec's lengths) still read by `analyze-vm-opcodes` / `gen-opcode-appendix`; point them at the shared table and retire it. | row F3 |
 | na1-decompiler | 148 fixed-region (`$C000`+) names are filed under `[prg.bank0]` (e.g. `rng_mod` `$CA52`, `min_word`, `draw_message`, `cursor_nav_loop`, `nmi_off`), so bank 15's own scoped view (its listing, its C, the family report) cannot see them. Move them to `[prg.bank15]`. | row E `family` FILLs |
+| UW-decompile | `docs/10-call-graph.md` "strict layering / ZERO subsystem→subsystem edges" counted direct `CALL_abs` only; through `call_in_bank_dcd1` 34 subsystem → subsystem edges exist (`callgraph uw --indegree`). Correct the chapter. | row H |
+| bk, GemFire, LEmp, ... (all KOEI NES titles) | **The source ladder.** NA1 has every layer: 6502 listing, labeled 6502, bytecode listing, raw bytecode C, DREAM C, and each makes inference easier (Chris, 2026-10-23). Later titles may have lost some. Check each title has every layer, regenerated by the shared tools. | row H (Chris) |
+| na1-decompiler | `fill_bytes` `$CA97`, `memchr` `$CAF0` and 5 more bank-15 routines have no caller and no root (`callgraph na1 --orphans --bank 15`; the old index agrees): linked, never called with a constant address. Confirm dead, or find the computed call. | row H |
 | na1-decompiler | The 4 `source/1-asm-6502/bank_NN_labeled.asm` were removed from git by `2d2e7ef` ("recreate the source ladder") and exist only as untracked local files, while `CONTEXT.md` and `mesen-labels.py` call them committed and `--verify` checks them. Re-add them (they verify clean). | row A3 |
 | elite-decompiler | `apply_labels.py` rewrites `source/asm/` in place, so a renamed label never reaches the listings until they are re-swept: always run the README's sweep first, or write labeled copies beside raw ones. | row A3 |
 | UW-decompile | `gen_labels.py` no longer reproduces `mesen-labels.toml` (it writes 1,090 lines; the committed file has 1,468, grown by the walks). Running it overwrites walked names: retire it, or make it merge. | row E oracle |

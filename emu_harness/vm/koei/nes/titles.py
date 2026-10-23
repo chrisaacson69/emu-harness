@@ -244,13 +244,9 @@ def resolve_syscall_entry_calls(text, entry_names, sysmap):
     return re.sub(rf'(?:{alt})\((?P<id>\d+)(?P<sep>,\s*|\))', rep, text)
 
 
-def decompile(name, bank, asm_in, out=None, raw=False):
-    """Batch bytecode->C for one bank's rendered VM-asm (generalizes vm_decompile_<game>.py).
-    Reuses emu_harness.vm.koei.nes.vm_decompile verbatim; feeds the title's bank-scoped labels so CALL targets
-    render with this game's names. `asm_in` is the listing produced by `disasm <game> <bank>`.
-    raw=True disables ALL structuring -> the direct goto/label C (the `3-c-basic` baseline that the
-    DREAM structurer folds into `4-c`); the two differ only by structure, same labels."""
-    import io, contextlib
+def decompiler_for(name, bank, raw=False):
+    """vm_decompile configured for one bank of a title: the setup `decompile` and `callgraph` share.
+    raw=True disables all structuring. -> (vm_decompile module, cfg, bank-scoped labels, syscall map)"""
     cfg = game_cfg(name); _import_core()
     import emu_harness.vm.koei.nes.vm_decompile as VC
     if raw:
@@ -269,6 +265,17 @@ def decompile(name, bank, asm_in, out=None, raw=False):
         if _nops:
             VC.OPCODE_TO_MNEMONIC = {**VC.OPCODE_TO_MNEMONIC, **{op: 'nop' for op in _nops}}
     VC.set_schema(name)                                 # per-title record field maps (na1!=na2 layout)
+    return VC, cfg, labs, sysmap
+
+
+def decompile(name, bank, asm_in, out=None, raw=False):
+    """Batch bytecode->C for one bank's rendered VM-asm (generalizes vm_decompile_<game>.py).
+    Reuses emu_harness.vm.koei.nes.vm_decompile verbatim; feeds the title's bank-scoped labels so CALL targets
+    render with this game's names. `asm_in` is the listing produced by `disasm <game> <bank>`.
+    raw=True disables ALL structuring -> the direct goto/label C (the `3-c-basic` baseline that the
+    DREAM structurer folds into `4-c`); the two differ only by structure, same labels."""
+    import io, contextlib
+    VC, cfg, labs, sysmap = decompiler_for(name, bank, raw)
     text = Path(asm_in).read_text(encoding="utf-8")
     addrs = [int(x, 16) for x in re.findall(r';\s*sub\s+\$([0-9A-Fa-f]+)', text)]
     chunks, errs = [], 0

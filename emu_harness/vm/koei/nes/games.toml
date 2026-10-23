@@ -396,6 +396,15 @@ syscall_slots  = 31
 extop_table    = 0xEE7A          # from na2's copy; [na2] itself has no extop_* keys
 extop_slots    = 46
 
+[na1.native_floor]                # NA1 is the oracle, never a native_floor target; these seed its call graph
+syscall_slots  = 23              # the 23-entry syscall surface (docs 04-syscall-api; native-call-index read 23)
+extop_table    = 0xF261          # ext_op_dispatch $F246: lda $F261,x / $F262,x; jmp ($0000). Here, not in [na1],
+extop_slots    = 48              # which the decompiler reads. $01-$2F real handlers, $00 unused, garbage from $30
+
+[ro3k.native_floor]
+syscall_slots  = 30              # handler_match's 30 ROTK handlers at $C16E
+extop_slots    = 48              # [ro3k] extop_table $F8F2: $01-$2F valid, garbage from $30 (measured)
+
 [rot3k2.native_floor]
 oracle         = "na2"           # its copy seeded no syscall/ext-op tables
 
@@ -408,6 +417,28 @@ extop_slots    = 48
 oracle         = "rot3k2"
 syscall_slots  = 28
 extop_slots    = 48
+
+# ---- callgraph (MIGRATION.md row H): the natives through which bytecode reaches ANOTHER bank. ----
+# Each names a registry label; callgraph matches the DECODED call target against that label's address
+# and reads the constant arguments from the raw C line at the call. The bankcall trampoline itself
+# (`bankcall_fn`, args window / bankval / addr) needs no entry here.
+#   bankrun  = { fn, id, bank_arg }  a syscall invoker; args[0] == id runs bank args[bank_arg] & 31
+#   dataload = { fn, bank_arg }      copies data out of bank args[bank_arg] & 31 (a data edge)
+#   dispatch = { fn, banks }         fn(N) runs bank banks[N] (a mode table read from the code)
+#   tables   = [{ bank, addr, count, kind }]   a ROM table of entry words: roots ("table:<kind>")
+[na1.callgraph]
+tables   = [{ bank = 1, addr = 0xB9B2, count = 34, kind = "command" }]   # the lord-command drivers (command-table.txt; ROM-verified)
+
+[rot3k2.callgraph]
+bankrun  = { fn = "vm_syscall", id = 2, bank_arg = 2 }                # syscall_call_banked_routine
+
+[bk.callgraph]
+bankrun  = { fn = "syscall_invoke_struct", id = 2, bank_arg = 2 }     # call_banked_routine
+dataload = { fn = "memcpy_banked", bank_arg = 1 }
+
+[gemfire.callgraph]
+bankrun  = { fn = "vm_syscall", id = 2, bank_arg = 2 }                # syscall_call_banked_routine $FA73
+dispatch = { fn = "dispatch_mode_screen", banks = [0, 1, 2, 4, 8, 9, 14, 16] }   # bank 30's mode table
 
 [lemp.native_floor]
 oracle         = "na2"

@@ -67,30 +67,36 @@ class Title:
         return BASE <= a <= 0xFFFF
 
 
-def seeds(t):
+def seed_groups(t):
+    """The seeds by where they come from: {"vector": .., "vm_handler": .., "vm_core": .., "extop": ..,
+    "syscall": .., "extra": ..}. A call graph reads them as roots (reached from outside any routine)."""
     c, nf, buf = t.cfg, t.nf, t.buf
-    s = {word(buf, 0xFFFA), word(buf, 0xFFFC), word(buf, 0xFFFE)}
+    g = {"vector": {word(buf, 0xFFFA), word(buf, 0xFFFC), word(buf, 0xFFFE)}}
     if c.get("syscall_vector"):
-        s.add(word(buf, c["syscall_vector"]))
+        g["vector"].add(word(buf, c["syscall_vector"]))
     lo, hi = c["handler_lo"] - BASE, c["handler_hi"] - BASE
-    s |= {buf[lo + i] | buf[hi + i] << 8 for i in range(256)}
-    s |= {c["vm_entry"], c["dispatcher"]}
+    g["vm_handler"] = {buf[lo + i] | buf[hi + i] << 8 for i in range(256)}
+    g["vm_core"] = {c["vm_entry"], c["dispatcher"]}
     if c.get("extop_dispatch"):
-        s.add(c["extop_dispatch"])
+        g["vm_core"].add(c["extop_dispatch"])
     if nf.get("syscall_slots"):
         table, n = c["syscall_table"], nf["syscall_slots"]
         if c.get("syscall_kind") == "jsr3":                  # 3-byte `JMP abs` entries
-            s |= {word(buf, table + 3 * k + 1) for k in range(n)}
+            g["syscall"] = {word(buf, table + 3 * k + 1) for k in range(n)}
         else:                                                # raw 2-byte addresses
-            s |= {a for a in (word(buf, table + 2 * k) for k in range(n)) if t.in_bank(a)}
+            g["syscall"] = {a for a in (word(buf, table + 2 * k) for k in range(n)) if t.in_bank(a)}
         if c.get("syscall_dispatch"):
-            s.add(c["syscall_dispatch"])
-        s |= set(nf.get("syscall_tramps", []))
+            g["syscall"].add(c["syscall_dispatch"])
+        g["syscall"] |= set(nf.get("syscall_tramps", []))
     if nf.get("extop_slots"):
         table = nf.get("extop_table", c.get("extop_table"))
-        s |= {a for a in (word(buf, table + 2 * k) for k in range(nf["extop_slots"])) if t.in_bank(a)}
-    s |= set(nf.get("extra_seeds", []))
-    return s
+        g["extop"] = {a for a in (word(buf, table + 2 * k) for k in range(nf["extop_slots"])) if t.in_bank(a)}
+    g["extra"] = set(nf.get("extra_seeds", []))
+    return g
+
+
+def seeds(t):
+    return set().union(*seed_groups(t).values())
 
 
 def jsr_census(buf):
