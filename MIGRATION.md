@@ -435,10 +435,13 @@ remainder as unverified.
 
 ## Open questions (Chris)
 
-- **Three registry labels sit on operand bytes inside boot code**, with no caller and no table
-  entry: GemFire `$F5D0 boot_init_sound_channels`, `$F8D0 hide_sprites` (operand of `jmp $F8E5`),
-  gk `$C0A9 boot_init_tail_start_main`. They describe real code but are not entry points. Move
-  each to the instruction where that code starts, or drop them?
+- ~~**Three registry labels sit on operand bytes inside boot code**: move or drop?~~ **Resolved
+  2026-10-23 (Chris: labels mark the start of code):** moved to the instruction their comments
+  describe. GemFire `boot_init_sound_channels` `$F5D0`→`$F5D2`, `hide_sprites` `$F8D0`→`$F8D2` (the
+  target of the jump at `$F8A5`), gk `boot_init_tail_start_main` `$C0A9`→`$C0A8` (the clear-loop head).
+  native_floor output is unchanged. The `.mlb` files of the seven KOEI NES titles are now committed:
+  na2, rot3k2, bk, GemFire and LEmp had them untracked, and ro3k and gk had none. na2's still drops 3
+  same-byte names (window collisions, row N).
 
 - ~~**nes-disasm6** (row B, deferred): still read by `asm-relabel` / `zp-harvest`?~~ **Resolved
   2026-10-23:** yes. Both read disasm6 listings (na1's `bank_NN.asm`, made with nes-disasm6 per na1
