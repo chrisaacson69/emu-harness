@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-strategic_map.py - KOEI illustrated STRATEGIC MAP asset layer (locate + assemble -> nes-render).
+strategic_map.py - KOEI illustrated STRATEGIC MAP asset layer (locate + assemble -> machines.nes.ppu).
 
 The richest KOEI-NES format: a metatile/section-assembly layer over generic 2bpp tiles. Ported from
 NA1's render-strategic-map.py. It owns the KOEI-specific knowledge -- WHERE the map's tilemap / attr /
 CHR / palette tables live, HOW a tilemap cell value indexes the (font|terrain) CHR-RAM, and HOW the 9
 pannable SECTIONS stitch into one big panorama -- and delegates ALL pixel work (tile decode, attr ->
-sub-palette, the big flexible cols x rows grid) to the generic `nes-render`. The eviction: NA1's
+sub-palette, the big flexible cols x rows grid) to the generic `machines.nes.ppu`. The eviction: NA1's
 render-strategic-map carried its own `decode_tile` / `attr_palette` / `NES_PALETTE`; those are gone
 here. We assemble a unified 256-tile CHR blob (so one flat index space covers font + terrain), a flat
 nametable, and a per-cell attribute plane, then hand the whole map to NR.render_tiles in one call --
@@ -20,12 +20,12 @@ The KOEI engine format that STAYS here:
               anchor older notes named). Cells V<=80 are GAME-FONT glyphs (digits / region labels)
               living in PT1 $1000.. from bank0 $B2BA. We build a unified CHR so V indexes straight in.
   - Palette : the 4 BG sub-palettes are an authoritative PPU capture (sub-pals 1-3 are inherited
-              ambient state, not a ROM table). Stored as NES colour indices -> nes-render does the RGB.
+              ambient state, not a ROM table). Stored as NES colour indices -> machines.nes.ppu does the RGB.
   - Stitch  : sections share fief RECORD lists ($9E3C); a global least-squares solve places every
               section on one virtual tilemap so the seam shear is distributed, not chained.
 
 Config is per-title (NA1 here; a new KOEI title with an illustrated map adds its own block). Dependency
-direction: koei-nes -> nes-render (generic), never the reverse.
+direction: vm.koei.nes.assets -> machines.nes.ppu (generic), never the reverse.
 """
 import sys
 from pathlib import Path
@@ -73,7 +73,7 @@ def _banked(prg, bank, addr):
 
 def _palette16(cfg=NA1):
     """The 4 BG sub-palettes (4 NES colour indices each) flattened to a 16-entry palette16 for
-    nes_render: sub-pal s, colour c -> palette16[s*4 + c]. nes-render does the index->RGB lookup."""
+    machines.nes.ppu: sub-pal s, colour c -> palette16[s*4 + c]. machines.nes.ppu does the index->RGB lookup."""
     pal = []
     for sub in cfg["map_bg_palette"]:
         pal += list(sub)
@@ -137,9 +137,9 @@ def _section_attr_plane(at, cfg=NA1):
     correcting the KOEI quirk: the section is blitted to screen cols 2-29 (MID attribute-cell), so the
     attribute byte for section-local col tx is decoded at screen col tx+2. Reading raw tx swaps
     sub-palettes on alternate quad-columns (lakes/mountains flip colour). Returns a flat list of
-    sub-palette ids (sec_w*sec_h); nes-render then maps id -> the right 4 palette16 entries.
+    sub-palette ids (sec_w*sec_h); machines.nes.ppu then maps id -> the right 4 palette16 entries.
 
-    Why expand here instead of handing nes-render the raw 32-byte attr table: nes_render.attr_subpalette
+    Why expand here instead of handing machines.nes.ppu the raw 32-byte attr table: ppu.attr_subpalette
     assumes the standard PPU layout (cell origin aligned to the tile grid). The +2 screen-column shift is
     a KOEI placement detail, so the koei layer resolves it into an explicit per-tile plane."""
     w, h = cfg["sec_w"], cfg["sec_h"]
@@ -223,7 +223,7 @@ def _nn_fill(grid, x0, y0, x1, y1, default):
 
 
 # ---------------------------------------------------------------------------
-# Top-level: assemble the big nametable + attr plane, then delegate pixels to nes-render.
+# Top-level: assemble the big nametable + attr plane, then delegate pixels to machines.nes.ppu.
 # ---------------------------------------------------------------------------
 def render_section(prg, sec, *, cfg=NA1, scale=2):
     """One section, big -- assemble its 28x16 nametable + attr plane and render via the generic API."""
@@ -235,8 +235,8 @@ def render_section(prg, sec, *, cfg=NA1, scale=2):
 
 def render_panorama(prg, sections, *, cfg=NA1, seed=0, scale=2):
     """Record-aligned stitch of the pannable sections into ONE big nametable, then render in a single
-    nes_render.render_tiles call. KOEI knowledge (which tables, how sections align, palette) stays here;
-    the flexible-canvas pixel work goes to nes-render. Returns (img, fief_px) where fief_px maps each
+    ppu.render_tiles call. KOEI knowledge (which tables, how sections align, palette) stays here;
+    the flexible-canvas pixel work goes to machines.nes.ppu. Returns (img, fief_px) where fief_px maps each
     1-based fief number to its label centre in OUTPUT (scaled) pixels."""
     chr = assemble_chr(prg, cfg)
     placed = layout_global(prg, sections, seed=seed, cfg=cfg)
@@ -293,7 +293,7 @@ def render_panorama(prg, sections, *, cfg=NA1, seed=0, scale=2):
 def _render_with_plane(chr, nametable, attr_plane, W, H, scale, cfg):
     """Render the assembled map through the generic renderer, honouring a PER-TILE sub-palette plane.
 
-    *** This is the nes-render API gap (see module REPORT note). *** nes_render.render_tiles selects a
+    *** This is the machines.nes.ppu API gap (see module REPORT note). *** ppu.render_tiles selects a
     cell's sub-palette from a raw NES ATTRIBUTE TABLE (1 byte / 4x4 tiles, 2 bits / 2x2 quad) via its
     internal attr_subpalette. The KOEI strategic map needs per-tile resolution: each section is blitted
     at screen col 2 (a +2 = one-quad column shift, mid attribute-cell), and stitched sections land at
@@ -322,7 +322,7 @@ def _render_with_plane(chr, nametable, attr_plane, W, H, scale, cfg):
 
 def _draw_label(chr, px, W, H, lx, ly, text, scale, cfg):
     """Draw `text` in the game font (white on a black box) at output px (lx,ly). Glyphs are decoded
-    from the SAME unified CHR block this module assembled (font tiles 0..80) via nes-render's decode_tile
+    from the SAME unified CHR block this module assembled (font tiles 0..80) via machines.nes.ppu's decode_tile
     -- so no font is re-located here; ink is any non-zero (2bpp) pixel."""
     bw, bh = (len(text) * 8 + 2) * scale, 10 * scale
     for yy in range(-scale, bh - scale):
@@ -353,7 +353,7 @@ def panorama(game="na1", out="strategic_map.png", *, scenario=50, scale=2, cfg=N
     img, fief_px = render_panorama(prg, sections, cfg=cfg, scale=scale)
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     img.save(out)
-    print(f"wrote {out}  ({img.width}x{img.height}, scenario-{scenario}, {len(fief_px)} fiefs, via nes-render)")
+    print(f"wrote {out}  ({img.width}x{img.height}, scenario-{scenario}, {len(fief_px)} fiefs, via machines.nes.ppu)")
     return img, fief_px
 
 
@@ -367,6 +367,6 @@ if __name__ == "__main__":
         prg = _prg(game_cfg("na1"))
         img = render_section(prg, sec, scale=scale)
         img.save(out)
-        print(f"wrote {out}  ({img.width}x{img.height}, section {sec}, via nes-render)")
+        print(f"wrote {out}  ({img.width}x{img.height}, section {sec}, via machines.nes.ppu)")
     else:
         panorama(out=out, scenario=scenario, scale=scale)

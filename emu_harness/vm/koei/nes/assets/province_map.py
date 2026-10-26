@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-province_map.py - KOEI ROTK province-map asset layer (locate + decode terrain grid -> nes-render).
+province_map.py - KOEI ROTK province-map asset layer (locate + decode terrain grid -> machines.nes.ppu).
 
 The province "map" is the small 3-row x 6-col terrain mosaic ROTK draws on a province's battle/map
 subscreen. This module owns the KOEI-specific knowledge -- WHERE the per-province map data lives, HOW
 the 3-bit terrain field per cell decodes, the row->data-row pattern, and HOW a terrain id expands into
 a 4-wide x 2-tall metatile of CHR tile indices -- and delegates ALL pixel work to the generic
-`nes-render`. Dependency direction: koei-nes -> nes-render, never the reverse.
+`machines.nes.ppu`. Dependency direction: vm.koei.nes.assets -> machines.nes.ppu, never the reverse.
 
 GROUNDED in the ROTK decompile (convert-not-rebuild; addresses ARE the ROM's own operands):
   DATA SOURCE (no save needed):
@@ -279,7 +279,7 @@ def render_province_map(province_id, *, game="ro3k", cfg=ROTK, scale=8, subpalet
                           chr_base=cfg["chr_ppu_base"], scale=scale, master=PAL_MASTER)
     out = out or f"rotk-province-map-{province_id:02d}.png"
     img.save(out)
-    print(f"wrote {out}  ({img.width}x{img.height}, province {province_id}, terrain grid {grid}, via nes-render)")
+    print(f"wrote {out}  ({img.width}x{img.height}, province {province_id}, terrain grid {grid}, via machines.nes.ppu)")
     return img, grid
 
 

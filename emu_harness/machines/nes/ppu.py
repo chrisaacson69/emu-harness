@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Moved from the nes-render repo (emu-harness MIGRATION.md row O), which keeps an alias.
+Moved from the nes-render repo (emu-harness MIGRATION.md row O; that repo was archived 2026-10-26).
 
-nes_render.py - a GENERIC NES PPU renderer: you hand it the planes, it gives you pixels.
+ppu.py - a GENERIC NES PPU renderer: you hand it the planes, it gives you pixels.
 
 This is the bottom layer of the asset stack (generic NES hardware; below the KOEI engine layer).
 Nothing here is game-specific -- it's the standard NES PPU: 2bpp CHR tiles, the 64-colour master
@@ -147,7 +147,7 @@ def render_chr_atlas(chr, *, count=256, cols=16, palette16=None, chr_base=0, sca
 if __name__ == "__main__":
     import sys
     # quick CLI: render a CHR atlas from a raw blob or an iNES file with CHR-ROM
-    #   py nes_render.py atlas <file> [offset] [count] [out.png]
+    #   py -3.14 -m emu_harness.machines.nes.ppu atlas <file> [offset] [count] [out.png]
     if len(sys.argv) >= 3 and sys.argv[1] == "atlas":
         data = open(sys.argv[2], "rb").read()
         if data[:4] == b"NES\x1a":          # iNES: skip header (+ trainer if present)

@@ -1727,4 +1727,6 @@ entries, where they are closed. First project: game-annotation (Mappy).
   KOEI-specific: UW is the action-leaning outlier, and Zelda / Mappy should share little.
 - **na1-snes-decompiler** has no vault pointer (it is now in the path resolver).
 - Do the koei-nes and koei-snes repos get **archived** after step 5, as nes-harness was?
+  (**nes-render was, 2026-10-26**: its last importer, Mappy `render_level`, moved to the library; repo
+  archived on GitHub, local clone removed, the library's prose now names `machines.nes.ppu`.)
 - UW-decompile: GitHub remote, public or private? (Its siblings GemFire and LEmp are public.)

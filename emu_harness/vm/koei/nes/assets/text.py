@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-text.py - KOEI font/text asset layer (locate font CHR + char->tile map -> nes-render).
+text.py - KOEI font/text asset layer (locate font CHR + char->tile map -> machines.nes.ppu).
 
 Sibling to portrait.py: it owns the KOEI-specific knowledge -- WHERE the built-in game font lives in
 the ROM and HOW an ASCII byte maps to a font tile -- and delegates ALL pixel work (tile decode,
-palette, grid) to the generic `nes-render`. The eviction: NA1's render-text.py carried its own
+palette, grid) to the generic `machines.nes.ppu`. The eviction: NA1's render-text.py carried its own
 `_tile_bitmap` (a hand-rolled 2bpp decoder) and its own pixel loop; those are gone here, replaced by
 `NR.decode_tile` / `NR.render_tiles`.
 
@@ -16,7 +16,7 @@ starting at tile 77. We assemble those two slices into ONE font-CHR blob whose t
 game's font tile number, so a built nametable of char-tile indices renders directly.
 
 Config is per-title (NA1 here; a new title with a built-in font adds its own block). Dependency
-direction: koei-nes -> nes-render (generic), never the reverse.
+direction: vm.koei.nes.assets -> machines.nes.ppu (generic), never the reverse.
 """
 import sys
 from pathlib import Path
@@ -108,11 +108,11 @@ def render_text(text, *, game="na1", cfg=NA1, scale=4, fg=None, bg=None):
 
 
 def font_atlas(game="na1", out="text_atlas.png", cfg=NA1, scale=5):
-    """Deliverable: the whole printable glyph run (ASCII 40-122) as a verification atlas, via nes-render."""
+    """Deliverable: the whole printable glyph run (ASCII 40-122) as a verification atlas, via machines.nes.ppu."""
     line = "".join(chr(c) for c in range(40, 123))
     img = render_text(line, game=game, cfg=cfg, scale=scale)
     img.save(out)
-    print(f"wrote {out}  ({len(line)} glyphs, ASCII 40-122, via nes-render)")
+    print(f"wrote {out}  ({len(line)} glyphs, ASCII 40-122, via machines.nes.ppu)")
     return img
 
 
@@ -123,6 +123,6 @@ if __name__ == "__main__":
         s = sys.argv[1]
         out = sys.argv[2] if len(sys.argv) > 2 else "text.png"
         render_text(s).save(out)
-        print(f"wrote {out}  ('{s}', via nes-render)")
+        print(f"wrote {out}  ('{s}', via machines.nes.ppu)")
     else:
         print(__doc__)

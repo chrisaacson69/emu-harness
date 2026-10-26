@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-animation.py - KOEI command/event ANIMATION asset layer (bank-14 animation-VM -> nes-render).
+animation.py - KOEI command/event ANIMATION asset layer (bank-14 animation-VM -> machines.nes.ppu).
 
 Second KOEI-asset-layer specimen, ported from NA1's run-animation.py. It owns the KOEI-specific
 ENGINE: the bank-14 animation bytecode VM. That VM reads an id, indexes a 5-byte descriptor table,
@@ -11,10 +11,10 @@ frame at each present point. That part is the keep -- it's genuine per-title eng
 
 The eviction: run-animation carried its own `decode_tile` + a hardcoded `NES_PALETTE` and hand-rolled
 the per-sprite pixel loop (flip/transparency/clip). All of that is GENERIC NES PPU work -- it now lives
-in nes-render. Per frame we hand nes-render the (CHR, OAM, palette) and it returns the pixels via
+in machines.nes.ppu. Per frame we hand machines.nes.ppu the (CHR, OAM, palette) and it returns the pixels via
 `NR.render_sprites` over a backdrop built from the asset layer's `MASTER`. Zero own-core pixel decode here.
 
-Dependency direction: koei-nes -> nes-render (generic), never the reverse. ROM is resolved via
+Dependency direction: vm.koei.nes.assets -> machines.nes.ppu (generic), never the reverse. ROM is resolved via
 `game_cfg`; the SRAM trace (a captured mid-game state, lives in the na1 repo) is resolved relative to
 that repo root -- no hardcoded absolute paths.
 """
@@ -135,7 +135,7 @@ def interpret_animation(aid, *, game="na1", cfg=None, sram=None, trace=False):
     """KOEI engine: drive the animation VM headless and capture per-frame PPU state.
 
     Returns (frames, descriptor) where frames is a list of (oam_bytes, pal_bytes, chr_bytes) -- the
-    raw planes for each present point. NO pixel decode happens here; that's nes-render's job. Works
+    raw planes for each present point. NO pixel decode happens here; that's machines.nes.ppu's job. Works
     for any title with a CONFIGS block (NA1, ROTK); per-title differences (CHR-upload style, syscall
     dispatch address, present points, scene-id selector) are all in cfg.
     """
@@ -220,14 +220,14 @@ def interpret_animation(aid, *, game="na1", cfg=None, sram=None, trace=False):
 
 def _sprite_palette16(pal):
     """The 32-byte PPU palette shadow -> a 16-entry sprite palette region (sub-palettes 4-7, $3F10+),
-    in the layout nes_render.render_sprites wants (4 sub-palettes x 4 NES indices)."""
+    in the layout ppu.render_sprites wants (4 sub-palettes x 4 NES indices)."""
     return [pal[0x10 + i] & 0x3F for i in range(16)]
 
 
 def render_frames(frames, *, pt_base=0, sprite_h=8, scale=3, trace=False):
-    """Generic: turn each captured (chr, oam, pal) frame into a PIL image -- delegated to nes-render.
+    """Generic: turn each captured (chr, oam, pal) frame into a PIL image -- delegated to machines.nes.ppu.
 
-    nes-render owns ALL pixel work: backdrop fill from NES_MASTER, then render_sprites does the
+    machines.nes.ppu owns ALL pixel work: backdrop fill from NES_MASTER, then render_sprites does the
     per-sprite tile decode + palette + flip + transparency + clip. We only supply the planes and the
     sprite-window bbox bookkeeping (which is animation framing, not pixel decode).
     """
@@ -285,7 +285,7 @@ def render_frames(frames, *, pt_base=0, sprite_h=8, scale=3, trace=False):
 
 def render_animation(aid, *, game="na1", cfg=None, sram=None, pt=0, sprite_h=8, scale=3,
                      trace=False, out_prefix=None):
-    """Full pipeline: interpret the animation VM, render its frames via nes-render, write
+    """Full pipeline: interpret the animation VM, render its frames via machines.nes.ppu, write
     a GIF + a contact sheet. Returns the list of PIL frames."""
     frames, _desc = interpret_animation(aid, game=game, cfg=cfg, sram=sram, trace=trace)
     imgs, _fs = render_frames(frames, pt_base=pt * 0x1000, sprite_h=sprite_h, scale=scale, trace=trace)
@@ -311,7 +311,7 @@ def render_animation(aid, *, game="na1", cfg=None, sram=None, pt=0, sprite_h=8, 
 
 if __name__ == "__main__":
     import argparse
-    ap = argparse.ArgumentParser(description="Render a KOEI bank-14 animation via nes-render.")
+    ap = argparse.ArgumentParser(description="Render a KOEI bank-14 animation via machines.nes.ppu.")
     ap.add_argument("id", nargs="?", type=int)
     ap.add_argument("--game", default="na1")
     ap.add_argument("--sram", default=None)

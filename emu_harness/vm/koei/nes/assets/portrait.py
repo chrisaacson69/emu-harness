@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-portrait.py - KOEI daimyo/officer portrait asset layer (locate planes -> nes-render).
+portrait.py - KOEI daimyo/officer portrait asset layer (locate planes -> machines.nes.ppu).
 
 The first KOEI-asset-layer specimen, ported from NA1's render-portrait.py. It owns the KOEI-specific
 knowledge -- WHERE the portrait planes live and HOW they're assembled -- and delegates all pixel work
-(tile decode, palette, grid) to the generic `nes-render`. The eviction: NA1's render-portrait carried
-its own `decode_tile` / `tile_img` / `NES_PALETTE`; those are gone here, replaced by nes-render.
+(tile decode, palette, grid) to the generic `machines.nes.ppu`. The eviction: NA1's render-portrait carried
+its own `decode_tile` / `tile_img` / `NES_PALETTE`; those are gone here, replaced by machines.nes.ppu.
 
 Two KOEI portrait systems:
   COMPOSITE (RNG-generated daimyo): a base-5 "face code" picks a variant (0-4) of each of 4 feature
@@ -14,7 +14,7 @@ Two KOEI portrait systems:
     nametable) + a fixed 4-colour palette.
 
 Config is per-title (NA1 here; a new title with portraits adds its own block). Dependency direction:
-koei-nes -> nes-render (generic), never the reverse.
+vm.koei.nes.assets -> machines.nes.ppu (generic), never the reverse.
 """
 import sys
 from pathlib import Path
@@ -43,7 +43,7 @@ NA1 = {
     "preset_layout": 0xB144, "preset_tile_base": 0x5B,
     "palette4": [0x3E, 0x38, 0x28, 0x30],     # TRUE ROM indices $F7CC (black/cream/gold/white)
 }
-# Portraits render through nes-render's WARM master (NES_MASTER_FCEUX) so the ROM's real 2C02 indices
+# Portraits render through machines.nes.ppu's WARM master (NES_MASTER_FCEUX) so the ROM's real 2C02 indices
 # land warm cream/gold (matching the in-game look + the original NA1 tool), instead of the cool default.
 PAL_MASTER = MASTER
 GRAY4 = [0x0F, 0x00, 0x10, 0x30]              # the composite sheet's greyscale ramp
@@ -89,7 +89,7 @@ def _prg(cfg):
 
 
 def _pal16(four):
-    """4 NES colour indices -> a 16-entry palette16 (sub-palette 0) for nes_render.render_tiles."""
+    """4 NES colour indices -> a 16-entry palette16 (sub-palette 0) for ppu.render_tiles."""
     return list(four) + [0] * 12
 
 
@@ -151,7 +151,7 @@ def render_na1_daimyo(mapid=24, *, game="na1", cfg=NA1, scale=6, out=None):
     img = render_preset_portrait(prg, mapid, cfg=cfg, scale=scale)
     out = out or f"na1-portrait-mapid{mapid}.png"
     img.save(out)
-    print(f"wrote {out}  (NA1 daimyo mapid {mapid}, preset CHR via descriptor[{mapid}], via nes-render)")
+    print(f"wrote {out}  (NA1 daimyo mapid {mapid}, preset CHR via descriptor[{mapid}], via machines.nes.ppu)")
     return img
 
 
@@ -166,7 +166,7 @@ def faces_sheet(game="na1", out="portrait_faces.png", cfg=NA1):
     for i, im in enumerate(imgs):
         sheet.paste(im, (8 + i * (w + 8), 8))
     sheet.save(out)
-    print(f"wrote {out}  ({len(combos)} composite faces, via nes-render)")
+    print(f"wrote {out}  ({len(combos)} composite faces, via machines.nes.ppu)")
 
 
 # ===================== ROTK officer portrait (composite via the ROM's own assembler) =====================
@@ -236,7 +236,7 @@ def render_rotk_portrait(idx=0, *, game="ro3k", cfg=ROTK, scale=12, out=None):
     out = out or f"rotk-portrait-{name.replace(' ', '-').lower() or idx}.png"
     img.save(out)
     print(f"wrote {out}  (ROTK officer {idx} '{name}', CHR from feature-block formulas + "
-          f"layout via $E7F5, via nes-render)")
+          f"layout via $E7F5, via machines.nes.ppu)")
     return img
 
 

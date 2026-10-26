@@ -3,16 +3,16 @@
 chr_extract.py - KOEI CHR-RAM acquisition layer (reconstruct CHR planes from a Mesen trace).
 
 This is the "ACQUIRE planes" front-end of the KOEI asset pipeline -- the step that comes BEFORE
-nes-render. KOEI Famicom titles ship CHR-RAM, not CHR-ROM: the pattern tables are empty at power-on
+machines.nes.ppu. KOEI Famicom titles ship CHR-RAM, not CHR-ROM: the pattern tables are empty at power-on
 and the game uploads tile bitmaps into PPU $0000-$1FFF at runtime via its bulk CHR uploader. So you
 can't just slice tiles out of the ROM the way portrait.py / text.py do for ROM-resident glyph blocks;
 for the runtime-uploaded sheets (title screen, battle sprites, ...) you have to WATCH the upload
 happen. This tool replays a Mesen CPU instruction trace and reconstructs the resulting CHR-RAM blob.
 
 Output: a CHR-RAM byte blob (one PPU window, default $1000-$1FFF = 4 KB). That blob is the INPUT to
-`nes-render` -- e.g. `nes_render.render_chr_atlas(blob, count=256, cols=16)` to eyeball the sheet, or
+`machines.nes.ppu` -- e.g. `ppu.render_chr_atlas(blob, count=256, cols=16)` to eyeball the sheet, or
 feed it as the `portrait_chr` / font-CHR argument the renderer modules expect. This module does NOT
-import nes-render: it produces planes, it does not draw them. Dependency direction is one-way.
+import machines.nes.ppu: it produces planes, it does not draw them. Dependency direction is one-way.
 
 How the upload is observed (the KOEI-specific part, hence config-driven):
   The bulk uploader sets the PPU write address (PPUADDR $2006) from two zero-page bytes, then streams

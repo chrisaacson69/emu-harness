@@ -18,7 +18,7 @@ from collections import defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]  # the folder the sibling repos live in
-LIBS = ["emu-harness", "nes-render", "koei-nes", "koei-snes", "snes-decompiler", "game-annotation"]
+LIBS = ["emu-harness", "koei-nes", "koei-snes", "snes-decompiler", "game-annotation"]
 TITLES = ["na1-decompiler", "ro3k-decompiler", "gk-decompiler", "na2-decompiler",
           "rot3k2-decompiler", "bk-decompiler", "GemFire-decompiler", "LEmp-decompiler",
           "Elite-decompiler", "UW-decompile", "rot3k2-snes-decompiler",
