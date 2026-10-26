@@ -40,13 +40,22 @@ def phase_paths(phase, track):
     return list(paths.get("common", [])) + list(paths.get(track, []))
 
 
-def resolve_project(arg):
-    """A folder given as a path (absolute, or relative to the cwd), else a sibling of emu-harness."""
+def resolve_project(arg, siblings=None):
+    """A folder given as a path (absolute, or relative to the cwd), else a sibling of emu-harness,
+    else a project folder one level inside a sibling that holds a roadmap (the early breakdowns live
+    in a monorepo: `mappy` is game-annotation/mappy). Two such matches are refused, not guessed."""
+    siblings = SIBLINGS if siblings is None else Path(siblings)
     p = Path(arg)
-    for cand in (p, SIBLINGS / p):
+    for cand in (p, siblings / p):
         if cand.is_dir():
             return cand.resolve()
-    raise RoadmapError(f"no project folder '{arg}' (tried it as a path and under {SIBLINGS})")
+    nested = sorted(d.parent for d in siblings.glob(f"*/{arg}/{ROADMAP}")) if len(p.parts) == 1 else []
+    if len(nested) == 1:
+        return nested[0].resolve()
+    if nested:
+        raise RoadmapError(f"'{arg}' is ambiguous: {', '.join(str(d) for d in nested)}; pass the path")
+    raise RoadmapError(f"no project folder '{arg}' (tried it as a path, under {siblings}, "
+                       f"and as <sibling>/{arg}/{ROADMAP})")
 
 
 def load_roadmap(project_dir):

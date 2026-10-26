@@ -114,3 +114,18 @@ def test_cli_json(tmp_path, capsys, monkeypatch):
 def test_missing_roadmap_points_at_the_template(tmp_path):
     with pytest.raises(st.RoadmapError, match="roadmap.template.toml"):
         st.status(tmp_path)
+
+
+def test_resolve_project_finds_a_folder_inside_a_sibling(tmp_path):
+    (tmp_path / "solo").mkdir()
+    (tmp_path / "mono" / "mappy").mkdir(parents=True)
+    (tmp_path / "mono" / "mappy" / st.ROADMAP).write_text("")
+    (tmp_path / "mono" / "notes").mkdir()                       # no roadmap: never a match
+    assert st.resolve_project("solo", tmp_path) == (tmp_path / "solo").resolve()
+    assert st.resolve_project("mappy", tmp_path) == (tmp_path / "mono" / "mappy").resolve()
+    with pytest.raises(st.RoadmapError):
+        st.resolve_project("notes", tmp_path)
+    (tmp_path / "other" / "mappy").mkdir(parents=True)
+    (tmp_path / "other" / "mappy" / st.ROADMAP).write_text("")
+    with pytest.raises(st.RoadmapError, match="ambiguous"):
+        st.resolve_project("mappy", tmp_path)
