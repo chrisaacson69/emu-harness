@@ -816,6 +816,59 @@ eleven render tools build on these.
   identical; 79 tests pass.
 - These tools now need `py -3.14`; the `/nobunaga` skill says so.
 
+## Row P1 done: the live-emulator library (2026-10-26)
+
+Chris: *"standard tools when working with the live emulator: screencaps, tracelogs and such ...
+in a library so you are not reinventing every time."* Measured first: all 13 na1 Lua probes are
+the same mechanism (hook an exec/write address, read RAM, log) with game-specific addresses and
+fields; `combat-certify` v7 had already concluded "log now, calc later". The Python tools mixed one
+generic piece (finding Mesen's `Debugger\` folder, hard-coded in two of them) with game logic. The
+O3/O4 scratch scripts held the rest (input scripts, nametable text, PPU reads, battery juggling).
+
+**Bridge (`backends/mesen`), four commands, all probed live on Zelda:**
+
+| Command / client | What |
+|---|---|
+| `shot` / `screenshot(path)` | `emu.takeScreenshot()`: the console's own frame as PNG. Never the desktop (kernel rule). |
+| `write` / `write(memType, addr, bytes)` | `emu.write` |
+| `state` / `state(prefix)` | `emu.getState()` scalars, e.g. `cpu.*`, `ppu.*` (Mesen's key names) |
+| `watch` / `watch(kind, start, end, path, regs=, ranges=)`, `read_watch` | A generic exec/read/write hook: one text line per hit (frame, address, value, optional `cpu.*`, hex of chosen RAM ranges); the header names the columns. A probe becomes a spec, not a script. Caught `LayoutRoomOW` firing once with RoomId $76 on a walk left. |
+| `debugger_dir`, `debugger_files(suffix, name)` | Mesen's GUI dump/trace folder, newest first |
+
+**NES layer (`machines/nes/live.py`):**
+- `play` / `run`: input scripts (`"wait*120,start,a*3,hold:left*60"`).
+- `PPUSnapshot.capture(m)` reads through `nesPpuDebug`, the PPU's own address space, so CHR
+  banking and nametable mirroring are already applied (Mesen's state has no generic mirroring
+  key). `.page(i)` gives a Canvas, `.scroll()` comes from the t register plus fine X, and `.frame()`
+  rebuilds the picture. Sprites follow the hardware rules: OAM 0 in front, the behind-background
+  bit, the left 8-pixel masks.
+  **Oracle: `frame()` vs Mesen's own screenshot at 4 Zelda moments (title, overworld, two walks,
+  Link included): STRUCTURE, 0 pixels off;** only the RGB table differs. Limits, stated: one
+  scroll per frame (no mid-frame splits), no 8-sprites-per-line drop.
+- `text(page, charmap)`: a nametable as text.
+
+**Battery: `NES(rom, sram=...)` and the default clean run now put back the save Mesen held, byte
+for byte, on close.** Found the hard way this session: ad-hoc probes left a different save in
+Zelda's slot each run. Nothing was lost (backups), but the user's slot changed. Restored to the
+Oct 2 original (md5 `d6dd38b5…`); `tests/test_battery.py` pins it with a stubbed Mesen.
+`clean_battery=False` still runs on, and leaves, whatever is there (Mappy's search workers).
+
+**Converted:**
+- na1 `mesen-dump` and `capture-test`: library resolver, CLI output identical across `list` /
+  `path` / `--trace` / name match / no match; py -3.14.
+- `Zelda1-decompiler/tools/verify_overworld.py`: on `live.run` and `PPUSnapshot`, still EXACT,
+  and the Zelda save's md5 is unchanged across the run.
+
+88 tests pass.
+
+**P2, still open:**
+- UW `trace_boot`'s MMC5 memory (8K windows, the $5205 multiplier) belongs in `machines/nes` as a
+  mapper beside the core's MMC1-only memory.
+- Convert one na1 Lua probe (e.g. `vm-trace`) into a `watch` spec. The oracle is the same log from
+  the same inputs; the probes themselves stay in na1.
+- Mappy `demo_in_real_game` already runs on `NES`; check it for local copies of `play`/trace parsing.
+- `run-effect` is headless (CPU/VM, not Mesen); it belongs with row F's runners, not here.
+
 ## Row O4 done, row O closed: the virtual canvas, with Zelda's overworld (2026-10-26)
 
 **The contract** is `machines/nes/canvas.Canvas`: `cols x rows` tile indices plus one sub-palette

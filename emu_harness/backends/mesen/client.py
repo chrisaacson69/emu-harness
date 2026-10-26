@@ -31,6 +31,21 @@ def save_files(home: Path, rom: Path) -> list[Path]:
     return [p for p in (home / "Saves").glob(glob_escape(rom.stem) + ".*")]
 
 
+def debugger_dir(config: dict | None = None) -> Path:
+    """Where Mesen's GUI debugger writes memory dumps (*.dmp) and trace logs (*.txt)."""
+    return (config or load_config())["home"] / "Debugger"
+
+
+def debugger_files(suffix: str, name: str | None = None, config: dict | None = None) -> list[Path]:
+    """Files of one type in the Debugger folder, newest first; `name` keeps those whose file name
+    contains it (case-insensitive)."""
+    d = debugger_dir(config)
+    fs = [p for p in d.iterdir() if p.is_file() and p.suffix.lower() == suffix.lower()] if d.is_dir() else []
+    if name:
+        fs = [p for p in fs if name.lower() in p.name.lower()]
+    return sorted(fs, key=lambda p: p.stat().st_mtime, reverse=True)
+
+
 def glob_escape(s: str) -> str:
     return "".join(f"[{c}]" if c in "[]*?" else c for c in s)
 
@@ -164,6 +179,38 @@ class Mesen:
             raise BridgeError(f"cdl: {resp!r}, file has {len(data)} bytes")
         return data
 
+    def write(self, mem_type: str, addr: int, data: bytes) -> None:
+        resp = self.cmd(f"write {mem_type} {addr} {bytes(data).hex()}")
+        if resp != f"ok {len(data)}":
+            raise BridgeError(f"write: {resp!r}")
+
+    def screenshot(self, path: Path) -> Path:
+        """The console's own rendered frame as a PNG (Mesen's takeScreenshot). Never the desktop."""
+        resp = self.cmd(f"shot {Path(path)}")
+        if not resp.startswith("ok ") or int(resp.split()[1]) != Path(path).stat().st_size:
+            raise BridgeError(f"shot: {resp!r}")
+        return Path(path)
+
+    def state(self, prefix: str = "") -> dict[str, str]:
+        """emu.getState() scalars (key names are Mesen's, per console), e.g. state("cpu.")."""
+        line = self.cmd(f"state {prefix}".rstrip())
+        return dict(kv.split("=", 1) for kv in line.split()) if line else {}
+
+    def watch(self, kind: str, start: int, end: int, path: Path, *, regs: bool = False,
+              ranges=()) -> int:
+        """Log every exec/read/write hit in [start, end] to `path`, one text line per hit:
+        frame address value [cpu.* registers] [hex per range]; ranges = (memType, addr, len).
+        Returns the watch id for watch_off. Parse the file with read_watch."""
+        spec = f"{kind} {start} {end} {Path(path)}" + (" regs" if regs else "")
+        spec += "".join(f" {mt}:{a}:{n}" for mt, a, n in ranges)
+        resp = self.cmd("watch " + spec)
+        if not resp.startswith("ok "):
+            raise BridgeError(f"watch: {resp!r}")
+        return int(resp.split()[1])
+
+    def watch_off(self, wid: int | None = None) -> None:
+        self.cmd("watch off" + (f" {wid}" if wid is not None else ""))
+
     def input_keys(self, port: int = 0) -> list[str]:
         return self.cmd(f"inputkeys {port}").split(",")
 
@@ -190,3 +237,25 @@ class Mesen:
 
     def __exit__(self, *exc):
         self.close()
+
+
+def read_watch(path: Path) -> list[dict]:
+    """A watch log -> one dict per hit, keyed by the header's column names. frame/address/value
+    and cpu.* come back as ints where they parse; ranges stay as bytes."""
+    lines = Path(path).read_text().splitlines()
+    if not lines or not lines[0].startswith("# "):
+        raise ValueError(f"{path}: not a watch log")
+    cols = lines[0][2:].split()
+    out = []
+    for line in lines[1:]:
+        row = {}
+        for k, v in zip(cols, line.split()):
+            if ":" in k:
+                row[k] = bytes.fromhex(v)
+            else:
+                try:
+                    row[k] = int(v)
+                except ValueError:
+                    row[k] = v
+        out.append(row)
+    return out

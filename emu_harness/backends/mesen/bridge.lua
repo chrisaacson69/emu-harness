@@ -30,6 +30,14 @@
 --   trace off                -> close the trace file; ok
 --   cdl <memType> <path>     -> write emu.getCdlData(memType) (one flag byte per byte of that
 --                               memory: the code/data log so far) to path; ok <length>
+--   write <memType> <addr> <hex> -> write the bytes; ok <count>
+--   shot <path>              -> the console's own rendered frame as PNG (emu.takeScreenshot,
+--                               never the desktop) written to path; ok <bytes>
+--   state [prefix]           -> emu.getState() scalars as sorted key=value pairs (e.g. "cpu.")
+--   watch <exec|read|write> <start> <end> <path> [regs] [memType:addr:len ...]
+--                            -> from now on, one text line per hit: frame address value, the cpu.*
+--                               state if "regs", hex of each range; first line names the columns.
+--                               ok <id>. "watch off [id]" closes one or all.
 --   quit                     -> bye, then emu.stop(0)
 
 local socket = require("socket.core")
@@ -96,6 +104,75 @@ local function trace_frame()
   trace.read = false
 end
 
+-- emu.getState() as one line of sorted key=value pairs (scalars only), optionally only the
+-- keys starting with `prefix` (e.g. "cpu."). Key names are Mesen's and vary by console.
+function state_line(prefix)
+  local st, ks = emu.getState(), {}
+  for k, v in pairs(st) do
+    if type(v) ~= "table" and (not prefix or k:sub(1, #prefix) == prefix) then ks[#ks + 1] = k end
+  end
+  table.sort(ks)
+  local out = {}
+  for _, k in ipairs(ks) do out[#out + 1] = k .. "=" .. tostring(st[k]) end
+  return table.concat(out, " ")
+end
+
+-- Watches: a memory callback that appends one text line per hit, so a game probe is a spec,
+-- not a script ("log now, calc later"). Line: frame address value [cpu.* values] [hex per range].
+-- The first line of the file, "# ...", names the columns.
+local watches, watch_next = {}, 1
+
+function watch_open(spec)
+  -- <exec|read|write> <start> <end> <path> [regs] [<memType>:<addr>:<len> ...]
+  local kind, s, e, path, opts = spec:match("^(%a+)%s+(%d+)%s+(%d+)%s+(%S+)%s*(.*)$")
+  assert(kind and emu.callbackType[kind], "watch: usage watch <exec|read|write> <start> <end> <path> [regs] [memType:addr:len ...]")
+  local w = { kind = emu.callbackType[kind], s = tonumber(s), e = tonumber(e),
+              f = assert(io.open(path, "w")), regs = nil, ranges = {} }
+  local cols = { "frame", "address", "value" }
+  for tok in opts:gmatch("%S+") do
+    if tok == "regs" then
+      w.regs = {}
+      for kv in state_line("cpu."):gmatch("%S+") do
+        local k = kv:match("^([^=]+)=")
+        w.regs[#w.regs + 1] = k
+        cols[#cols + 1] = k
+      end
+    else
+      local mt, a, l = tok:match("^(%a+):(%d+):(%d+)$")
+      assert(mt and emu.memType[mt], "watch: bad range " .. tok)
+      w.ranges[#w.ranges + 1] = { emu.memType[mt], tonumber(a), tonumber(l) }
+      cols[#cols + 1] = tok
+    end
+  end
+  w.f:write("# " .. table.concat(cols, " ") .. "\n")
+  w.cb = emu.addMemoryCallback(function(address, value)
+    local parts = { frame, address, value or 0 }
+    if w.regs then
+      local st = emu.getState()
+      for _, k in ipairs(w.regs) do parts[#parts + 1] = tostring(st[k]) end
+    end
+    for _, r in ipairs(w.ranges) do
+      local b = {}
+      for i = 0, r[3] - 1 do b[#b + 1] = string.format("%02x", emu.read(r[2] + i, r[1])) end
+      parts[#parts + 1] = table.concat(b)
+    end
+    w.f:write(table.concat(parts, " "), "\n")
+  end, w.kind, w.s, w.e)
+  local id = watch_next
+  watches[id], watch_next = w, watch_next + 1
+  return id
+end
+
+function watch_close(id)
+  for i, w in pairs(watches) do
+    if not id or i == id then
+      emu.removeMemoryCallback(w.cb, w.kind, w.s, w.e)
+      w.f:close()
+      watches[i] = nil
+    end
+  end
+end
+
 -- Returns true when the client asked to run frames (leave the callback and emulate).
 local function handle(line)
   local cmd, rest = line:match("^(%S+)%s*(.*)$")
@@ -137,6 +214,29 @@ local function handle(line)
     local out = {}
     for i = 0, l - 1 do out[#out + 1] = string.format("%02x", emu.read(a + i, memType)) end
     send(table.concat(out))
+  elseif cmd == "write" then
+    local mt, a, hex = rest:match("^(%S+)%s+(%d+)%s+(%x+)$")
+    local memType = assert(emu.memType[mt or ""], "write: unknown memType " .. tostring(mt))
+    a = tonumber(a)
+    local i = 0
+    for x in hex:gmatch("%x%x") do emu.write(a + i, tonumber(x, 16), memType); i = i + 1 end
+    send("ok " .. i)
+  elseif cmd == "shot" then
+    -- the console's own frame (what the emulator rendered), never the desktop
+    local png = emu.takeScreenshot()
+    local f = assert(io.open(rest, "wb"))
+    f:write(png)
+    f:close()
+    send("ok " .. #png)
+  elseif cmd == "state" then
+    send(state_line(rest ~= "" and rest or nil))
+  elseif cmd == "watch" then
+    if rest:match("^off") then
+      watch_close(tonumber(rest:match("^off%s+(%d+)")))
+      send("ok")
+    else
+      send("ok " .. watch_open(rest))
+    end
   elseif cmd == "save" then
     local st = emu.createSavestate()
     -- the frame counter lives in Lua, not in the savestate: carry it in a 4-byte prefix
@@ -175,6 +275,7 @@ local function handle(line)
     send("ok " .. (last - first + 1))
   elseif cmd == "quit" then
     trace_close()
+    watch_close()
     send("bye")
     conn:close()
     emu.stop(0)
