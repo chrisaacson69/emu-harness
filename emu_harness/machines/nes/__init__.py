@@ -1,11 +1,12 @@
 """NES machine layer (pad map, battery wipe, RAM reads), currently bound to the Mesen backend."""
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 # Known coupling: NES subclasses the Mesen backend, and wipe_battery knows Mesen's
 # Saves/ folder. Split it when a second backend gets a Python client (see CLAUDE.md).
-from ...backends.mesen import Mesen, load_config, save_files
+from ...backends.mesen import Mesen, glob_escape, load_config, save_files
 
 # Standard pad names (as written in input logs) -> Mesen getInput() names.
 # Verified against Mesen 2.2.1 getInput(0): a,b,down,left,right,select,start,up.
@@ -14,17 +15,35 @@ PAD = {"Up": "up", "Down": "down", "Left": "left", "Right": "right",
 KEYS = list(PAD.values())   # mask bit i = KEYS[i]
 
 
+BACKUP_DIR = "emu-harness-backup"
+
+
 def wipe_battery(rom: Path, config: dict | None = None) -> list[Path]:
-    """Delete Mesen's battery save for this ROM. A stale .sav silently changes a replay."""
+    """Move Mesen's battery save for this ROM aside, so the run powers on clean. A stale .sav
+    silently changes a replay. Moved, never deleted: the save may be someone's game (row O3 lost
+    NA1's this way). Returns the backups, in Saves/emu-harness-backup/, stamped with the time. A save
+    whose bytes are already backed up is not copied again (each run would add one otherwise)."""
     cfg = config or load_config()
-    gone = save_files(cfg["home"], Path(rom))
-    for p in gone:
-        p.unlink()
-    return gone
+    backups = []
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    for p in save_files(cfg["home"], Path(rom)):
+        folder = p.parent / BACKUP_DIR
+        folder.mkdir(exist_ok=True)
+        data = p.read_bytes()
+        same = [b for b in folder.glob(glob_escape(p.name) + ".*") if b.read_bytes() == data]
+        if same:
+            p.unlink()
+            backups.append(same[0])
+        else:
+            dest = folder / f"{p.name}.{stamp}"
+            p.replace(dest)
+            backups.append(dest)
+    return backups
 
 
 class NES(Mesen):
-    """A Mesen instance with the NES pad map; power-on from a wiped battery by default."""
+    """A Mesen instance with the NES pad map; power-on from a clean battery by default (any existing
+    save is moved to Saves/emu-harness-backup/, see wipe_battery)."""
 
     def __init__(self, rom: Path, *, clean_battery: bool = True, ram_power_on: str | None = None, **kw):
         """ram_power_on: AllZeros | AllOnes | Random (Mesen's RamState). BizHawk's quickerNES

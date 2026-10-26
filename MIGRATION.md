@@ -728,7 +728,7 @@ A schema language that could express UW's tables is possible, but no second titl
   - Thinning them to the port changes their committed PNGs' colours unless the KOEI layer adopts
     one master for everything.
 - ~~**O3:** the animation palette, against an emulator-rendered frame.~~ Done, below.
-- **O4:** the virtual-canvas contract, with a non-KOEI user (Zelda overworld).
+- ~~**O4:** the virtual-canvas contract, with a non-KOEI user (Zelda overworld).~~ Done, below.
 
 ## Row O3 done: the animation, against Mesen's own PPU (2026-10-23)
 
@@ -770,7 +770,7 @@ fix plus the RGB-table split.
 are proven, but which 2C02 RGB table to draw with is a choice; the port's TODO is one master for the
 whole KOEI layer, decided with retiring the na1 copies.
 
-**Toolset hazard found (open):** `machines.nes.NES` wipes the ROM's Mesen battery save by default, which
+**Toolset hazard found (fixed 2026-10-26, row O4):** `machines.nes.NES` wipes the ROM's Mesen battery save by default, which
 keeps replays clean. The O3 probes ran it on NA1 and deleted whatever `Nobunaga's Ambition
 (USA).sav` held; it can't be recovered. Fix it by backing up instead of deleting, and say so in
 `NES()`.
@@ -815,6 +815,43 @@ eleven render tools build on these.
 - **Library side:** the render oracle changes only the intended images; the ro3k atlas is 315/315
   identical; 79 tests pass.
 - These tools now need `py -3.14`; the `/nobunaga` skill says so.
+
+## Row O4 done, row O closed: the virtual canvas, with Zelda's overworld (2026-10-26)
+
+**The contract** is `machines/nes/canvas.Canvas`: `cols x rows` tile indices plus one sub-palette
+id per tile, any size. A game decodes its map format into one; `paste` / `crop` compose screens into
+a world; `render(chr, palette16)` draws through `ppu.render_tiles`, so every PPU rule stays the
+library's. Per-tile sub-palettes rather than an attribute table, so canvases paste at any tile
+offset; `from_nametable` converts a real 1 KB PPU page by the hardware quadrant rule. Pinned by
+`tests/test_canvas.py`.
+
+**The user** is a title repo, `Zelda1-decompiler` (local git `aba270a`, not pushed; ROMs ignored):
+- `tools/overworld.py` converts the game's `LayoutRoomOW` / `WriteSquareOW` / `CheckTileObject` /
+  `FillPlayAreaAttrs` (routine names and table offsets from aldonunez's PRG0 disassembly, cloned
+  read-only into `ref/`) into one 512 x 176 tile canvas: all 128 screens, play area only, secrets
+  unfound.
+- **Revisions:** the overworld tables sit at the same PRG offsets in PRG0 and Rev 1. Rev 1 changes
+  the *content* of the common background patterns at the same offset; the decoder reads Rev 1's.
+
+**Oracles, both below the decoder** (`tools/verify_overworld.py`):
+
+| Check | Result |
+|---|---|
+| Mesen live PPU at the start screen $77 (from power-on: register "AAA", file 1): play-area tiles, sub-palettes, pattern table $1000, BG palette | EXACT |
+| Same, walked by hand to $67, $76, $78 | EXACT (4/4 reached) |
+| The ROM's own `LayoutRoomOW` ($A9F4) + `FillPlayAreaAttrs` ($83D7), bank 5 Rev 1, run on the harness 6502 over Mesen's live RAM + WRAM, for all 128 room ids | **EXACT 128/128** |
+| Same oracle against planted faults: square table shifted 4 bytes / attributes flattened | 123 and 128 rooms differ (it detects) |
+
+Blind walking reaches only 4 screens; running the game's code on the CPU core is what covers the
+world. The AIBeatsZelda bot's decoder matched the 98 screens it walked.
+
+**The battery hazard is fixed.** `wipe_battery` now moves the save to
+`Saves/emu-harness-backup/<name>.<timestamp>` and skips a copy whose bytes are already there
+(`tests/test_battery.py`). The Zelda `.sav` that sat in Mesen's `Saves` (Oct 2) was moved and put
+back after the runs (md5 unchanged).
+
+83 tests pass. **Row O is closed.** Next: P (live emulator), Q (trace decoding), R (static RE of
+native games).
 
 ## Row D done: one native-floor tool (2026-10-22)
 
