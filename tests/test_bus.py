@@ -36,3 +36,34 @@ def test_ram_mirrors_and_controller_shifts_out():
     b.buttons = 0b1000_1001                            # A, Start, Right
     b.write(0x4016, 1); b.write(0x4016, 0)
     assert [b.read(0x4016) for _ in range(9)] == [1, 0, 0, 1, 0, 0, 0, 1, 1]
+
+
+def nrom_rom() -> bytes:
+    return b"NES\x1a" + bytes([1, 0, 0x01, 0x00]) + bytes(8) + bytes(0x4000)
+
+
+def test_ppu_port_receives_register_traffic():
+    """Bus(ppu=PPUPort()): a headless run's PPU writes land in VRAM (Mappy render_level)."""
+    from emu_harness.machines.nes.ppuport import PPUPort
+    port = PPUPort()
+    bus = Bus(nrom_rom(), ppu=port)
+    bus.write(0x2006, 0x21)                   # toggle now set: a stray first half
+    bus.read(0x2002)                          # $2002 read clears it
+    for v in (0x20, 0x00):                    # $2006 hi, lo -> v = $2000
+        bus.write(0x2006, v)
+    bus.write(0x2000, 0x04)                   # increment 32
+    bus.write(0x2007, 0xAA)
+    bus.write(0x200F, 0xBB)                   # mirror of $2007
+    assert (port.vram[0x2000], port.vram[0x2020]) == (0xAA, 0xBB)
+    bus.write(0x2000, 0x00)
+    bus.write(0x2006, 0x20); bus.write(0x2006, 0x00)
+    assert bus.read(0x2007) == 0              # first read returns the stale buffer
+    assert bus.read(0x2007) == 0xAA           # then the byte at $2000
+    assert port.v == 0x2002
+
+
+def test_bus_without_a_port_stays_a_stub():
+    bus = Bus(nrom_rom())
+    bus.write(0x2006, 0x20)
+    assert bus.read(0x2007) == 0
+    assert bus.read(0x2002) in (0x00, 0x80)

@@ -6,15 +6,16 @@ lessons** that apply. The design and its decisions are on the vault page `method
 full lessons, with their sources, are on `method/re-controller-lessons.md` (each phase below names its
 section there).
 
-The phase list itself is `emu_harness/build/phases.toml` (keys, gates, and the library paths each gate
+The phase list itself is `emu_harness/build/phase_table.toml` (keys, gates, and the library paths each gate
 depends on); this manual is the prose over it, and `tests/test_build.py` holds the two together.
 
 ## How a session runs
 
 1. **`py -3.14 -m emu_harness status <project>`**. The project keeps its state in
    `<project>/re-roadmap.toml` (template: `emu_harness/build/roadmap.template.toml`). Status marks the
-   phase to start at: the first that isn't done, or that is done but whose gate is **stale** (a commit
-   since the gate ran touched the library that gate depends on). `--json` gives records.
+   phase to start at: the first that isn't done, that is done but whose gate is **stale** (a commit
+   since the gate ran touched the library that gate depends on), or that is done with an **open
+   revisit** against it (the item contests the gate; earliest phase first). `--json` gives records.
 2. **Read the project's entry docs** (`[project] entry` in its roadmap) before running anything.
 3. **Work one phase, or one revisit.** One project per session. Inference runs sequentially; an agent
    per phase at most, never a swarm for cross-talk.

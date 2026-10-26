@@ -5,10 +5,11 @@
 `<project>` is a folder: a path, or a name next to emu-harness (the sibling convention, as
 games.toml's `repo`), e.g. `game-annotation/mappy`. The project keeps its own state in
 `<project>/re-roadmap.toml` (template: roadmap.template.toml beside this file); emu-harness keeps
-only the phases (phases.toml) and their manual (PHASES.md).
+only the phases (phase_table.toml) and their manual (PHASES.md).
 
-A phase is where to start when it is not done, or when it is done but its gate is stale: a commit
-after the one the gate ran on touched a library path that gate depends on. Staleness is asked of
+A phase is where to start when it is not done, when it is done but its gate is stale (a commit
+after the one the gate ran on touched a library path that gate depends on), or when it is done
+with an open revisit against it. Staleness is asked of
 git; when git can't answer, the phase says "unknown", never fresh.
 """
 import subprocess
@@ -18,7 +19,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]                  # build -> emu_harness -> emu-harness
 SIBLINGS = REPO.parent
-PHASES_TOML = HERE / "phases.toml"
+PHASE_TABLE = HERE / "phase_table.toml"
 TEMPLATE = HERE / "roadmap.template.toml"
 ROADMAP = "re-roadmap.toml"
 
@@ -31,7 +32,7 @@ class RoadmapError(Exception):
 
 
 def load_phases():
-    return tomllib.loads(PHASES_TOML.read_text(encoding="utf-8"))["phase"]
+    return tomllib.loads(PHASE_TABLE.read_text(encoding="utf-8"))["phase"]
 
 
 def phase_paths(phase, track):
@@ -135,6 +136,9 @@ def status(project_dir):
                 start = {"phase": k, "reason": st}
             elif st == "done" and row["freshness"] != "fresh":
                 start = {"phase": k, "reason": f"gate {row['freshness']}: {row['freshness_detail']}"}
+            elif st == "done" and row["open_revisits"]:
+                # An open item contests the gate's result; earliest phase first (foundation early).
+                start = {"phase": k, "reason": f"{row['open_revisits']} open revisit(s)"}
     return {
         "project": rm["project"], "folder": str(project_dir), "emu_harness": head(),
         "phases": rows, "start": start,

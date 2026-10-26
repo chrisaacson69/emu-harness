@@ -5,7 +5,9 @@ bus itself: its mapper-register writes switch the banks, as on hardware. For tra
 flow (UW's boot tracer) without an emulator.
 
   2 KiB internal RAM, mirrored to $1FFF
-  $2000-$3FFF  PPU stub: $2002 toggles bit 7 on each read, so vblank waits finish; else 0
+  $2000-$3FFF  PPU stub: $2002 toggles bit 7 on each read, so vblank waits finish; else 0.
+               With `ppu=ppuport.PPUPort()`, register reads and writes also reach it, so a game's
+               own draw routines paint into `ppu.vram` (the $2002 answer stays the stub's).
   $4016        controller 1, serial: `buttons` bit 0..7 = A B Select Start Up Down Left Right
   $4020-$FFFF  the mapper (NROM, MMC5)
 
@@ -20,6 +22,7 @@ scanline IRQ, CHR) are not modelled; a mode change raises.
 from __future__ import annotations
 
 from .memory import Cart
+from .ppuport import PPUPort
 
 
 class NROM:
@@ -88,7 +91,7 @@ MAPPERS = {0: NROM, 5: MMC5}
 
 
 class Bus:
-    def __init__(self, rom: bytes):
+    def __init__(self, rom: bytes, ppu: PPUPort | None = None):
         if rom[:4] != b"NES\x1a":
             raise ValueError("not an iNES image")
         mapper = (rom[6] >> 4) | (rom[7] & 0xF0)
@@ -97,6 +100,7 @@ class Bus:
         self.cart = Cart(mapper, rom[4] * 0x4000, bool(rom[6] & 0x02))
         self.mapper = MAPPERS[mapper](rom[16:16 + self.cart.prg_size])
         self.ram = bytearray(0x800)
+        self.ppu = ppu
         self.buttons = 0
         self._vblank = 0
         self._strobe = False
@@ -110,10 +114,11 @@ class Bus:
         if addr < 0x2000:
             return self.ram[addr & 0x7FF]
         if addr < 0x4000:
+            val = self.ppu.read(addr & 7) if self.ppu else 0
             if addr & 7 == 2:
                 self._vblank ^= 0x80
                 return self._vblank
-            return 0
+            return val
         if addr == 0x4016:
             b = (self.buttons >> self._shift) & 1 if self._shift < 8 else 1
             if not self._strobe and self._shift < 8:
@@ -128,6 +133,9 @@ class Bus:
         val &= 0xFF
         if addr < 0x2000:
             self.ram[addr & 0x7FF] = val
+        elif addr < 0x4000:
+            if self.ppu:
+                self.ppu.write(addr & 7, val)
         elif addr == 0x4016:
             self._strobe = bool(val & 1)
             if self._strobe:

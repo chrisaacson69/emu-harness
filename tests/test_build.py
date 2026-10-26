@@ -19,7 +19,7 @@ def test_manual_follows_the_phase_table():
     headings = re.findall(r"^## \d+\. .+ \(`(\w+)`\)$", text, re.M)
     assert headings == KEYS
     for p in st.load_phases():
-        assert f"**Gate:** {p['gate']}" in text, f"PHASES.md lacks {p['key']}'s gate as written in phases.toml"
+        assert f"**Gate:** {p['gate']}" in text, f"PHASES.md lacks {p['key']}'s gate as written in phase_table.toml"
 
 
 def test_every_gate_path_exists():
@@ -57,6 +57,15 @@ def test_a_stale_done_gate_is_where_to_start(tmp_path, monkeypatch):
     monkeypatch.setattr(st, "staleness", lambda toolset, paths: ("stale", "2 commit(s)"))
     p = _project(tmp_path, BASE + '[phase.classify]\nstatus = "done"\ntoolset = "x"\n')
     assert st.status(p)["start"]["phase"] == "classify"
+
+
+def test_an_open_revisit_on_a_done_phase_is_where_to_start(tmp_path, monkeypatch):
+    monkeypatch.setattr(st, "staleness", lambda toolset, paths: ("fresh", "ok"))
+    p = _project(tmp_path, BASE + '[phase.classify]\nstatus = "done"\ntoolset = "x"\n'
+                 '[phase.recon]\nstatus = "done"\ntoolset = "x"\n'
+                 '[[revisit]]\nitem = "a"\nphase = "recon"\nstatus = "open"\n'
+                 '[[revisit]]\nitem = "b"\nphase = "classify"\nstatus = "closed"\n')
+    assert st.status(p)["start"] == {"phase": "recon", "reason": "1 open revisit(s)"}
 
 
 def test_staleness_never_reads_as_fresh_without_git_saying_so():

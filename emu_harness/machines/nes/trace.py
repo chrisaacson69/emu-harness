@@ -12,8 +12,8 @@ follows the CPU side of the PPU interface (NESdev Wiki, "PPU registers", "PPU sc
   $4014 write   OAM DMA from page value * $100 (recorded; the source bytes are not in a trace)
 
 registers mirror every 8 bytes through $3FFF. So any game's VRAM uploads come back without knowing
-its upload routines. `vram` is the 16 KiB PPU address space as written (no nametable mirroring,
-palette mirrors not folded). Read-modify-write instructions on PPU registers are counted in
+its upload routines. The register model is `ppuport.PPUPort` (shared with `bus.Bus`); this adds the
+upload runs and OAM DMA. Read-modify-write instructions on PPU registers are counted in
 `unhandled`, not modelled.
 """
 from __future__ import annotations
@@ -21,6 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from ...cpu.m6502.disasm import ABS, ABX, ABY, IZX, IZY, OPS, ZP, ZPX, ZPY
+from .ppuport import PPUPort
 
 STORES = {"sta": "a", "stx": "x", "sty": "y"}
 READS = {"lda", "ldx", "ldy", "bit", "and", "ora", "eor", "adc", "sbc", "cmp", "cpx", "cpy"}
@@ -52,16 +53,12 @@ class Run:
     data: bytearray = field(default_factory=bytearray)
 
 
-class PPUWrites:
+class PPUWrites(PPUPort):
     def __init__(self):
-        self.vram = bytearray(0x4000)
-        self.written = bytearray(0x4000)     # 1 where the trace wrote
+        super().__init__()
         self.runs: list[Run] = []
         self.oam_dma: list[tuple[int | None, int]] = []    # (frame, source page)
         self.unhandled = 0
-        self.t = self.v = 0
-        self.toggle = False
-        self.increment = 1
         self._run: Run | None = None
 
     def feed(self, step) -> None:
@@ -83,38 +80,25 @@ class PPUWrites:
         if mn in STORES:
             self._write(reg, getattr(step, STORES[mn]), step)
         elif mn in READS:
-            if reg == 2:
-                self.toggle = False
-            elif reg == 7:
-                self.v = (self.v + self.increment) & 0x3FFF
+            self.read(reg)
+            if reg == 7:
                 self._run = None                 # keeps start + i * increment = each byte's address
         else:
             self.unhandled += 1
 
     def _write(self, reg: int, val: int, step) -> None:
-        if reg == 0:
-            self.increment = 32 if val & 4 else 1
-            self.t = (self.t & ~0x0C00) | ((val & 3) << 10)
-        elif reg == 5:
-            self.toggle = not self.toggle
-        elif reg == 6:
-            if not self.toggle:
-                self.t = (self.t & 0x00FF) | ((val & 0x3F) << 8)
-            else:
-                self.t = (self.t & 0xFF00) | val
-                self.v = self.t
-                self._run = Run(step.frame, step.pc, self.v, self.increment)
-                self.runs.append(self._run)
-            self.toggle = not self.toggle
-        elif reg == 7:
+        """The register write, plus the run it starts or extends."""
+        if reg == 6 and self.toggle:
+            self.write(reg, val)
+            self._run = Run(step.frame, step.pc, self.v, self.increment)
+            self.runs.append(self._run)
+            return
+        if reg == 7:
             if self._run is None or self._run.increment != self.increment:
                 self._run = Run(step.frame, step.pc, self.v, self.increment)
                 self.runs.append(self._run)
-            a = self.v & 0x3FFF
-            self.vram[a] = val
-            self.written[a] = 1
             self._run.data.append(val)
-            self.v = (self.v + self.increment) & 0x3FFF
+        self.write(reg, val)
 
     def feed_all(self, steps) -> "PPUWrites":
         for st in steps:

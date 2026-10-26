@@ -36,7 +36,7 @@ emu_harness/               the importable package: product code only
   core/                    shared contracts (symbols + region vocabulary); imports nothing else here
   backends/<emulator>/     client + the Lua that runs inside that emulator; its file formats (.mlb)
   machines/<console>/      pad map, vectors, battery saves, memory map for that console
-  build/                   the build tool: phases.toml, the roadmap template, the verbs (`-m emu_harness`)
+  build/                   the build tool: phase_table.toml, the roadmap template, the verbs (`-m emu_harness`)
 tools/                     CLI entry points (thin; logic lives in the package)
 tests/                     pytest; test_constitution runs the import contracts
 spike/<backend>/           probes and smoke tests: exploratory, not product
