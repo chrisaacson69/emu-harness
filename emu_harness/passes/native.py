@@ -94,19 +94,58 @@ def explain(m: NativeMap, kind: str, a: int) -> str | None:
     deliberate code, not a misread:
       "bit-skip"     an overlap inside `BIT abs` ($2C): a second entry hides in its operand
                      (ldx #1 / bit $02A2 = ldx #2 shares a tail; Mappy $F743/$F746)
-      "dead-path"    a halt right after a branch and its complement (bne x / beq y): the
-                     fall-through never runs (Mappy $CC3D/$CC3F)
+      "dead-path"    a halt where a path falls past a branch that is always taken (`dead_path`)
     Anything else stays unexplained, and the discover gate counts it."""
     starts = m.descent.starts if m.descent is not None else set()
     if kind == "overlap":
         for back in (1, 2):
             if m.canon(a - back) in starts and m.byte(a - back) == 0x2C:
                 return "bit-skip"
-    else:
-        b1, b2 = m.canon(a - 4), m.canon(a - 2)
-        if {b1, b2} <= starts and m.byte(b2) in BRANCHES and m.byte(b1) == m.byte(b2) ^ 0x20:
-            return "dead-path"
+    elif dead_path(m.byte, starts, m.canon(a)):
+        return "dead-path"
     return None
+
+
+LOAD_IMM = {0xA9, 0xA2, 0xA0}                   # lda / ldx / ldy #imm: set Z and N from the operand
+# leave Z and N alone: stores (every mode), clc sec cli sei cld sed clv, pha php, nop
+KEEPS_ZN = {0x85, 0x95, 0x8D, 0x9D, 0x99, 0x81, 0x91, 0x86, 0x96, 0x8E, 0x84, 0x94, 0x8C,
+            0x18, 0x38, 0x58, 0x78, 0xD8, 0xF8, 0xB8, 0x48, 0x08, 0xEA}
+
+
+def dead_path(byte, starts, a, *, back: int = 4) -> bool:
+    """True if the byte at `a` is reached only by falling past a branch that is always taken, so
+    the fall-through never runs. `byte(addr)` reads the program, `starts` holds instruction starts.
+      a branch and its complement     bne x / beq y                 (Mappy $CC3D/$CC3F)
+      a flag fixed by a load-imm      ldx #$00 / beq x              (Mappy $F73F: Z=1, beq always taken)
+                                      lda #$00 / sta v,x / beq x    (Mappy $F753: up to `back` stores
+                                      or flag-neutral ops between, straight-line only)
+    Never when something branches or jumps to `a`: then it is reached that way (Mappy $F5B8 follows
+    an always-taken bpl and is the target of beq $F5B8 at $F5A0)."""
+    b2 = a - 2
+    if b2 not in starts or byte(b2) not in BRANCHES:
+        return False
+    for s in starts:
+        op_s = byte(s)
+        if op_s in BRANCHES and ((s + 2 + ((byte(s + 1) ^ 0x80) - 0x80)) & 0xFFFF) == a:
+            return False
+        if op_s in (0x4C, 0x20) and (byte(s + 1) | byte(s + 2) << 8) == a:
+            return False
+    op = byte(b2)
+    if (a - 4) in starts and byte(a - 4) == op ^ 0x20:
+        return True
+    pos = b2
+    for _ in range(back + 1):
+        prev = next((s for s in (pos - 1, pos - 2, pos - 3)
+                     if s in starts and byte(s) in OPS and s + 1 + MODE_LEN[OPS[byte(s)][1]] == pos), None)
+        if prev is None:
+            return False
+        if byte(prev) in LOAD_IMM:
+            imm = byte(prev + 1)
+            return {0xF0: imm == 0, 0xD0: imm != 0, 0x30: imm >= 0x80, 0x10: imm < 0x80}.get(op, False)
+        if byte(prev) not in KEEPS_ZN:
+            return False
+        pos = prev
+    return False
 
 
 def dispatch_tables(m: NativeMap, seeds: set, *, back: int = 30, max_entries: int = 64,

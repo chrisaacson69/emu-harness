@@ -104,3 +104,43 @@ def test_explain_names_bit_skip_and_dead_paths_only():
     assert explain(m, "overlap", 0xC003) == "bit-skip" and explain(m, "illegal", 0xC014) == "dead-path"
     m.reach({0xC020})
     assert m.conflicts() == {"illegal": [0xC023]} and explain(m, "illegal", 0xC023) is None
+
+
+def test_dead_path_includes_a_flag_fixed_by_a_load_immediate():
+    from emu_harness.passes.native import dead_path
+    buf = bytearray([0xFF] * 0x4000)
+    def put(addr, *b):
+        buf[addr - 0xC000:addr - 0xC000 + len(b)] = bytes(b)
+    put(0xC030, 0xA2, 0x00, 0xF0, 0x02, 0xFF, 0xFF, 0x60)  # ldx #0 / beq $C036: $C034 never runs
+    put(0xC040, 0xA2, 0x01, 0xF0, 0x02, 0xFF, 0xFF, 0x60)  # ldx #1 / beq: not taken, $C044 is live
+    m = NativeMap(Window(bytes(buf), 0xC000))
+    m.reach({0xC030, 0xC040})
+    assert m.conflicts() == {"illegal": [0xC034, 0xC044]}
+    assert explain(m, "illegal", 0xC034) == "dead-path" and explain(m, "illegal", 0xC044) is None
+    assert dead_path(m.byte, m.descent.starts, 0xC034) and not dead_path(m.byte, m.descent.starts, 0xC044)
+
+
+def test_dead_path_walks_back_over_stores():
+    from emu_harness.passes.native import dead_path
+    buf = bytearray([0xFF] * 0x4000)
+    def put(addr, *b):
+        buf[addr - 0xC000:addr - 0xC000 + len(b)] = bytes(b)
+    put(0xC050, 0xA9, 0x00, 0x9D, 0x61, 0x01, 0xF0, 0x02, 0xFF, 0xFF, 0x60)  # lda #0 / sta $0161,x / beq
+    put(0xC060, 0xA9, 0x00, 0xE8, 0xF0, 0x02, 0xFF, 0xFF, 0x60)              # lda #0 / inx / beq: inx sets Z
+    m = NativeMap(Window(bytes(buf), 0xC000))
+    m.reach({0xC050, 0xC060})
+    s = m.descent.starts
+    assert dead_path(m.byte, s, 0xC057) and not dead_path(m.byte, s, 0xC065)
+
+
+def test_dead_path_never_hides_a_branch_target():
+    from emu_harness.passes.native import dead_path
+    buf = bytearray([0xFF] * 0x4000)
+    def put(addr, *b):
+        buf[addr - 0xC000:addr - 0xC000 + len(b)] = bytes(b)
+    put(0xC070, 0xF0, 0x04,              # beq $C076: a real way into $C076
+        0xA9, 0x00, 0x10, 0x02,          # lda #0 / bpl $C078: always taken, so the fall-through is dead
+        0xEA, 0x60, 0x60)                # $C076 nop / rts  ...but $C076 is the beq's target
+    m = NativeMap(Window(bytes(buf), 0xC000))
+    m.reach({0xC070})
+    assert not dead_path(m.byte, m.descent.starts, 0xC076)
