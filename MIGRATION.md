@@ -861,6 +861,52 @@ Oct 2 original (md5 `d6dd38b5…`); `tests/test_battery.py` pins it with a stubb
 
 88 tests pass.
 
+## Row Q done: trace decoding (2026-10-26)
+
+Two trace kinds. **Mesen's GUI trace log** (text, one line per instruction) was re-parsed by
+regexes in each na1 tool, and each tool rebuilt PPU memory by watching *na1's own* upload routines
+($C480 rows, $C293 bulk). **The bridge's per-frame RAM trace** (binary) had a second loader in
+`trace_diff`.
+
+**Library:**
+- `backends/mesen/tracelog.py`: `read_tracelog` / `parse_line` -> `Step` (pc, registers, frame,
+  cycle, the instruction bytes `BC:`, Mesen's `[$addr]` and `= $old`). Mesen's columns are
+  configurable: A X Y are required, and S P Fr Cycle BC are read when present. The Debugger trace
+  of 2026-05-27 has no P/Fr/Cycle; the na1 combat traces have all. .gz is transparent. Speed:
+  3.0M steps in 13 s.
+- `machines/nes/trace.py`: `PPUWrites` follows the PPU registers only: the $2000 increment, the
+  $2002 read clearing the shared toggle, $2005, $2006, $2007 writes and reads, register mirrors,
+  and $4014 OAM DMA. The effective address comes from the instruction bytes and registers, or from
+  the emulator's `[$addr]` for indirect modes, so labels in the disassembly don't matter. It
+  rebuilds VRAM and the upload runs for any game, with no routine knowledge.
+  `tests/test_trace.py`. One fix found by the test: a $2007 read ends a run, so that `start + i *
+  increment` stays each byte's address.
+
+**Oracles:**
+
+| Check | Result |
+|---|---|
+| na1 `extract-chr-from-trace` (routine-based) vs `PPUWrites.vram[$1000:$2000]`, same trace | **identical, 4096/4096** |
+| na1 `combat-trace-decode`, thin (library parser, its routine grouping kept), 6 archived combat traces | **output identical, 6/6** |
+| Every na1 upload (rows + bulk, full bytes) vs a `PPUWrites` run, 6 traces | **2,336 / 2,336 matched** |
+| emu-harness `trace_diff` on `read_trace` (3 comparisons of today's Mappy traces) | output identical |
+
+**Named differences:**
+- `combat-trace-decode` crashed on any trace without the Fr column (the current Debugger trace).
+  It now prints `—` and decodes it: 143 rows, 106 bulk.
+- `PPUWrites` also finds 894 uploads in the 6 traces that na1's decoder never looked at:
+  - full 32-byte palettes ($C6E3);
+  - single attribute-byte read-modify-writes ($C71A sets the address and reads, $C74D writes);
+  - address resets ($C6F9, empty runs);
+  - OAM DMA from page $06 every frame.
+- `extract-chr-from-trace` now counts a CHR byte written by any routine (identical on the trace
+  at hand).
+- na1 `title-nametable` / `title-render` cannot run: their input, `nametable_bytes.txt`, is not in
+  the repo. They are 🧪 one-shots, kept for provenance; a re-capture would come from
+  `PPUWrites.vram[$2000:$2400]`.
+
+93 tests pass. **Row Q is closed.** Next: R (static RE of native games).
+
 ## Row P2 done, row P closed (2026-10-26)
 
 | Item | Library side | Oracle |

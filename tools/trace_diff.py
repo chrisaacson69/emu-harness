@@ -14,13 +14,14 @@ import argparse
 import sys
 from pathlib import Path
 
-REC = 1 + 0x800
+from emu_harness.backends.mesen import read_trace
+
+RAM = 0x800
 
 
 def load(path: Path) -> list[bytes]:
-    data = path.read_bytes()
-    n = len(data) // REC
-    return [data[i * REC:(i + 1) * REC] for i in range(n)]
+    """Records as flag byte + RAM (the shared trace format; read_trace parses it)."""
+    return [bytes([flag]) + ram for flag, ram in read_trace(path, RAM)]
 
 
 def parse_ranges(specs):
