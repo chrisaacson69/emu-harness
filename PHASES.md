@@ -92,7 +92,12 @@ its last handler's `lda #$ae` as a 20th entry, inventing two routines that were 
 to a dispatcher that pops its return address never returns, so the bytes after it are a table, not
 code (18 handlers found); an "install" is a handler only if a `JMP (ind)` reads its variable (all 4
 of Mappy's were data pointers, counters or mis-pairs); a 2-byte routine with JSR callers is usually
-a fall-through entry, not a phantom: check the trace before marking DATA.
+a fall-through entry, not a phantom: check the trace before marking DATA. A `JMP (ind)` can sit in a
+shared stub reached by JSR, with the table load in the caller (Mappy's `$EA05` → `$EA46`: 63 B of
+door handlers stayed data, recall 99.4%; found in naming by a Mesen write-watch on the state byte,
+whose writer PC was in "data"); the fix resolves a stub at each caller's pointer-pair load. Close the
+gate with a CDL over real play: executed bytes the listing does not decode are holes, by definition
+(Mappy, three play logs: that was the only one).
 
 ## 3. Data, pure lane (`data`)
 
