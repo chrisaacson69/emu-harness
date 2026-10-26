@@ -149,13 +149,16 @@ def dead_path(byte, starts, a, *, back: int = 4) -> bool:
 
 
 def dispatch_tables(m: NativeMap, seeds: set, *, back: int = 30, max_entries: int = 64,
-                    inline=()):
+                    inline=(), caller_back: int = 64):
     """The indexed-dispatch idiom, to a fixpoint. `seeds` grows in place. `inline` names
     dispatchers that read a word table placed after the JSR that calls them (they join
     `m.noreturn`); each such call site is a table site too. A table ends before a word that is
     known code or a handler it already holds: Mappy's $C356 read the first instruction of its own
-    last handler as a 20th entry. -> (tables {site: (base, [handlers])}, every JMP (ind) and
-    inline-dispatch site seen, routines, instruction starts {offset: opcode})."""
+    last handler as a 20th entry. A JMP (ind) with no load of its pointer before it, reached by
+    JSR, is a shared stub: each JSR site within `caller_back` bytes after the full pair
+    (LDA tbl,r / STA ptr / LDA tbl+1,r / STA ptr+1) is a table site (Mappy's $EA05 -> $EA46).
+    -> (tables {site: (base, [handlers])}, every JMP (ind) and inline-dispatch site seen,
+    routines, instruction starts {offset: opcode})."""
     starts, ptr_of = {}, {}
     inline = {m.canon(a) for a in inline}
     m.noreturn |= inline
@@ -182,7 +185,24 @@ def dispatch_tables(m: NativeMap, seeds: set, *, back: int = 30, max_entries: in
             for base, sta_t in loads:
                 if sta_t == (ptr & 0xFF):
                     return base
+            if stub_callers(site_n):
+                return None
         return loads[0][0] if loads else None
+
+    def stub_callers(site_n):
+        site = m.canon(site_n)
+        return [c for c, op in starts.items() if op == JSR and m.canon(m.word(m.canon(c) + 1)) == site]
+
+    def paired_load(call, ptr):
+        """The nearest full pointer-pair load of `ptr` before the JSR at `call`."""
+        for a in sorted((m.canon(x) for x in starts if 0 < call - m.canon(x) <= caller_back),
+                        reverse=True):
+            op = m.byte(a)
+            if (op in (0xBD, 0xB9) and m.byte(a + 3) == 0x85 and m.byte(a + 4) == ptr & 0xFF
+                    and m.byte(a + 5) == op and m.word(a + 6) == m.word(a + 1) + 1
+                    and m.byte(a + 8) == 0x85 and m.byte(a + 9) == (ptr + 1) & 0xFF):
+                return m.word(a + 1)
+        return None
 
     def read(base):
         ents, a = [], base
@@ -200,24 +220,35 @@ def dispatch_tables(m: NativeMap, seeds: set, *, back: int = 30, max_entries: in
                 break
         return ents
 
-    tables, known = {}, set()
+    tables, known, known_calls = {}, set(), set()
+
+    def take(site, base):
+        ents = read(base)
+        if not ents:
+            return False
+        tables[site] = (base, ents)
+        m.mark_data(base, 2 * len(ents))
+        before = len(seeds)
+        seeds.update(e for e in ents if m.in_code(e))
+        return len(seeds) > before
+
     while True:
         fixpoint(seeds)
         new = False
         for n, op in sorted(starts.items()):
             if n in ptr_of and n not in known:
-                known.add(n)
                 base = m.canon(n) + 3 if op == JSR else resolve(n)
-                if base is None:
+                if base is not None or op == JSR or not stub_callers(n):
+                    known.add(n)                                        # a stub stays open: callers grow
+                    if base is not None:
+                        new = take(m.canon(n), base) or new
                     continue
-                ents = read(base)
-                if not ents:
-                    continue
-                tables[m.canon(n)] = (base, ents)
-                m.mark_data(base, 2 * len(ents))
-                before = len(seeds)
-                seeds.update(e for e in ents if m.in_code(e))
-                new = new or len(seeds) > before
+                for c in stub_callers(n):
+                    if c not in known_calls:
+                        known_calls.add(c)
+                        cb = paired_load(m.canon(c), ptr_of[n])
+                        if cb is not None:
+                            new = take(m.canon(c), cb) or new
         if not new:
             break
     return tables, known, fixpoint(seeds), starts

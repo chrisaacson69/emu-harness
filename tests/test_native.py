@@ -90,6 +90,27 @@ def test_tables_stop_at_their_own_handler_inline_tables_and_unconsumed_pairs():
     assert stored_pointer_installs(m, st) == [(0xC030, 0xC050)]
 
 
+def test_a_shared_jmp_ind_stub_resolves_at_each_jsr_caller():
+    buf = bytearray([0xFF] * 0x4000)
+    def put(addr, *b):
+        buf[addr - 0xC000:addr - 0xC000 + len(b)] = bytes(b)
+    put(0xC300, 0x6C, 0x1C, 0x00)                                # the stub: JMP ($001C)
+    put(0xC000, 0xB9, 0x00, 0xC2, 0x85, 0x1C, 0xB9, 0x01, 0xC2, 0x85, 0x1D)
+    put(0xC00A, *([0xEA] * 40))                                  # 40 NOPs: the load is out of `back`
+    put(0xC032, 0x20, 0x00, 0xC3, 0x60)                          # jsr stub ; rts
+    put(0xC050, 0xBD, 0x10, 0xC2, 0x85, 0x1C, 0xBD, 0x11, 0xC2, 0x85, 0x1D,
+        0x20, 0x00, 0xC3, 0x60)                                  # a second caller, its own table
+    put(0xC200, 0x00, 0xC1, 0x10, 0xC1)
+    put(0xC210, 0x20, 0xC1)
+    put(0xC100, 0x60); put(0xC110, 0x60); put(0xC120, 0x60)
+    m = NativeMap(Window(bytes(buf), 0xC000))
+    seeds = {0xC000, 0xC050}
+    tables, sites, routines, _ = dispatch_tables(m, seeds)
+    assert tables == {0xC032: (0xC200, [0xC100, 0xC110]), 0xC05A: (0xC210, [0xC120])}
+    assert {0xC100, 0xC110, 0xC120} <= routines
+    assert m.conflicts() == {}
+
+
 def test_explain_names_bit_skip_and_dead_paths_only():
     buf = bytearray([0xFF] * 0x4000)
     def put(addr, *b):
