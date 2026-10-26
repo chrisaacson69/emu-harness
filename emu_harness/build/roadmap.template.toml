@@ -1,0 +1,36 @@
+# re-roadmap.toml: where this project stands, read by `py -3.14 -m emu_harness status <project>`.
+# Copy this file to the project's root as re-roadmap.toml and fill it from the project's own
+# evidence. The phases and their gates are in emu-harness PHASES.md; their keys are fixed.
+# Nothing project-specific lives in emu-harness: this file is the project's state.
+
+[project]
+name    = ""            # the title, as the project's README names it
+track   = ""            # "vm" (KOEI bytecode) or "native"
+machine = ""            # "nes" or "snes"
+profile = ""            # emu-harness title profile (games.toml block), or "" for none
+entry   = []            # docs to read first, project-relative, in order
+
+# One table per phase, in PHASES.md order. Leave a phase out and status reports it "todo".
+#   status   "done" | "partial" | "todo" | "n/a"
+#   gate     the gate's last result, in one line, with the numbers
+#   checked  the date the gate last ran (YYYY-MM-DD)
+#   toolset  the emu-harness commit it ran on; "" = before emu-harness (always stale)
+#   evidence project-relative paths that hold the result
+[phase.classify]
+status   = "todo"
+gate     = ""
+checked  = ""
+toolset  = ""
+evidence = []
+
+# Open items found against this project: from the MIGRATION.md revisit table, a gate, or a session.
+# Close one by setting status = "closed" and saying where, never by deleting it.
+# [[revisit]]
+# item   = ""
+# phase  = ""          # a phase key
+# source = ""          # where it was found (e.g. "emu-harness MIGRATION.md row C")
+# status = "open"      # "open" | "closed"
+# closed = ""          # "YYYY-MM-DD: where it was fixed"
+
+[next]
+session = ""            # the concrete next-session entry: one phase or one revisit

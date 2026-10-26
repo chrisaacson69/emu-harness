@@ -59,6 +59,12 @@ source_modules = ["emu_harness.walk"]
 forbidden_modules = ["emu_harness.backends", "emu_harness.search"]
 
 [[tool.importlinter.contracts]]
+name = "The build tool reads state; it drives no emulator"
+type = "forbidden"
+source_modules = ["emu_harness.build"]
+forbidden_modules = ["emu_harness.backends", "emu_harness.search"]
+
+[[tool.importlinter.contracts]]
 name = "Backends know no console"
 type = "forbidden"
 source_modules = ["emu_harness.backends"]

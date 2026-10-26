@@ -36,11 +36,13 @@ emu_harness/               the importable package: product code only
   core/                    shared contracts (symbols + region vocabulary); imports nothing else here
   backends/<emulator>/     client + the Lua that runs inside that emulator; its file formats (.mlb)
   machines/<console>/      pad map, vectors, battery saves, memory map for that console
+  build/                   the build tool: phases.toml, the roadmap template, the verbs (`-m emu_harness`)
 tools/                     CLI entry points (thin; logic lives in the package)
 tests/                     pytest; test_constitution runs the import contracts
 spike/<backend>/           probes and smoke tests: exploratory, not product
 pyproject.toml             the package + the import contracts (the constitution)
 MIGRATION.md               the ledger for folding the console-RE toolset in here
+PHASES.md                  the build tool's manual: per phase, the commands, the gate, the lessons
 config.example.toml        committed template; config.toml is per-machine, gitignored
 _scratch/                  emulator logs and run output, gitignored
 ref/                       third-party reference runs, gitignored (no license, never vendored)

@@ -1653,6 +1653,10 @@ session after the toolset is complete, otherwise we will keep looping." Gaps the
 are recorded here, not fixed in passing. Each revisit is a full audit of that project with the
 finished toolset, not just the items below.
 
+**From 2026-10-26 each revisit runs through the build tool** (`PHASES.md`): `py -3.14 -m emu_harness
+status <project>`, with the project's rows below copied into its `re-roadmap.toml` as `[[revisit]]`
+entries, where they are closed. First project: game-annotation (Mappy).
+
 | Project | Found | By |
 |---|---|---|
 | UW-decompile | Native listings for banks 7, 8, 10, 13 and 17 were rendered at `$A000` but run at `$8000`. Recount the 555-sub inventory and the "106 recovered" figure. Re-render. | row N window evidence |

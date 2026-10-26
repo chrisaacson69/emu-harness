@@ -15,6 +15,9 @@ Emulators (**backends**) and consoles (**machines**) are independent plug-ins:
 Tools: `tools/replay_log.py` (replay an input log, report RAM SHA-1) and
 `tools/trace_diff.py` (find where two per-frame RAM traces diverge).
 
+**Build tool:** `py -3.14 -m emu_harness status <project>` reads a project's `re-roadmap.toml`
+and says which phase to work next; `PHASES.md` is the manual (per phase: commands, gate, lessons).
+
 Game adapters live in each game's own repo. See `CLAUDE.md` for the layout and rules.
 
 Setup: `py -3.14 -m pip install -e ".[dev]"` (editable), then copy `config.example.toml`
