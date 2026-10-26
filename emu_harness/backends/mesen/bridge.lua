@@ -34,7 +34,7 @@
 --   shot <path>              -> the console's own rendered frame as PNG (emu.takeScreenshot,
 --                               never the desktop) written to path; ok <bytes>
 --   state [prefix]           -> emu.getState() scalars as sorted key=value pairs (e.g. "cpu.")
---   watch <exec|read|write> <start> <end> <path> [regs] [memType:addr:len ...]
+--   watch <exec|read|write> <start> <end> <path> [regs] [memType:addr:len | memType:*ptr:len ...]
 --                            -> from now on, one text line per hit: frame address value, the cpu.*
 --                               state if "regs", hex of each range; first line names the columns.
 --                               ok <id>. "watch off [id]" closes one or all.
@@ -123,7 +123,7 @@ end
 local watches, watch_next = {}, 1
 
 function watch_open(spec)
-  -- <exec|read|write> <start> <end> <path> [regs] [<memType>:<addr>:<len> ...]
+  -- <exec|read|write> <start> <end> <path> [regs] [<memType>:[*]<addr>:<len> ...]
   local kind, s, e, path, opts = spec:match("^(%a+)%s+(%d+)%s+(%d+)%s+(%S+)%s*(.*)$")
   assert(kind and emu.callbackType[kind], "watch: usage watch <exec|read|write> <start> <end> <path> [regs] [memType:addr:len ...]")
   local w = { kind = emu.callbackType[kind], s = tonumber(s), e = tonumber(e),
@@ -138,9 +138,11 @@ function watch_open(spec)
         cols[#cols + 1] = k
       end
     else
-      local mt, a, l = tok:match("^(%a+):(%d+):(%d+)$")
+      -- memType:addr:len, or memType:*ptr:len = len bytes at the address held in the
+      -- little-endian word at ptr (e.g. a VM's PC register)
+      local mt, star, a, l = tok:match("^(%a+):(%*?)(%d+):(%d+)$")
       assert(mt and emu.memType[mt], "watch: bad range " .. tok)
-      w.ranges[#w.ranges + 1] = { emu.memType[mt], tonumber(a), tonumber(l) }
+      w.ranges[#w.ranges + 1] = { emu.memType[mt], tonumber(a), tonumber(l), star == "*" }
       cols[#cols + 1] = tok
     end
   end
@@ -153,7 +155,9 @@ function watch_open(spec)
     end
     for _, r in ipairs(w.ranges) do
       local b = {}
-      for i = 0, r[3] - 1 do b[#b + 1] = string.format("%02x", emu.read(r[2] + i, r[1])) end
+      local base = r[2]
+      if r[4] then base = emu.read(r[2], r[1]) | (emu.read(r[2] + 1, r[1]) << 8) end
+      for i = 0, r[3] - 1 do b[#b + 1] = string.format("%02x", emu.read(base + i, r[1])) end
       parts[#parts + 1] = table.concat(b)
     end
     w.f:write(table.concat(parts, " "), "\n")

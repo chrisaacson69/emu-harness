@@ -861,13 +861,20 @@ Oct 2 original (md5 `d6dd38b5…`); `tests/test_battery.py` pins it with a stubb
 
 88 tests pass.
 
-**P2, still open:**
-- UW `trace_boot`'s MMC5 memory (8K windows, the $5205 multiplier) belongs in `machines/nes` as a
-  mapper beside the core's MMC1-only memory.
-- Convert one na1 Lua probe (e.g. `vm-trace`) into a `watch` spec. The oracle is the same log from
-  the same inputs; the probes themselves stay in na1.
-- Mappy `demo_in_real_game` already runs on `NES`; check it for local copies of `play`/trace parsing.
-- `run-effect` is headless (CPU/VM, not Mesen); it belongs with row F's runners, not here.
+## Row P2 done, row P closed (2026-10-26)
+
+| Item | Library side | Oracle |
+|---|---|---|
+| UW `trace_boot` | **`machines/nes/bus.Bus`**: a whole cartridge's CPU space that drives its own banks (2K RAM mirrored, a headless PPU/controller stub, NROM + MMC5 PRG mode 3: $5114-$5117 windows with the ROM/RAM bit, $5113 PRG-RAM, the $5205 multiplier; other modes raise). `trace_boot` drops its `CompleteCPU` (the row C core has those 18 opcodes) and its local MMC5. | Output identical. Lockstep against the old CPU + MMC5: registers equal at every one of 2M steps. One fix found on the way: `prg_bank` reports the bank actually read (it wraps by PRG size), not the raw register value. `tests/test_bus.py`. |
+| na1 `vm-trace.lua` | `watch` gained **indirect ranges** (`memType:*ptr:len`, bytes at the address held in a RAM word, e.g. a VM PC). `Mesen(..., scripts=[...])` runs a title's own Lua probes, unchanged, beside the bridge, with `emu.log` going to a file (`m.script_log`). | na1 `tools/vm-trace.py`: the watch + the probe's trigger/depth logic in Python. In one session from `NAsave1.mss`, against the unchanged probe with its trigger set to $858D (the battle state loops and never reaches $967A): **240/240 lines identical, 60 trigger-to-outermost-return cycles.** `--check` reruns this. |
+| Mappy `demo_in_real_game` | **`read_trace(path, length)`** parses the bridge's own `trace` file format beside `read_watch`. The demo drops its copy and its `sys.path.insert` (a bug per CLAUDE.md: emu-harness is pip-installed). | All 34 output lines identical (6 Mesen sessions). |
+| na1 `run-effect` | Not live-emulator work: it runs a VM handler headless on the KOEI bus, so it belongs to row F's runners. No change. | |
+
+`vm/koei/nes`'s `Memory` stays separate from `Bus` on purpose. It runs one handler with the bank
+set by hand and ignores register writes; `Bus` lets the cartridge switch for itself.
+
+91 tests pass. **Row P is closed.**
+
 
 ## Row O4 done, row O closed: the virtual canvas, with Zelda's overworld (2026-10-26)
 
@@ -1560,6 +1567,8 @@ finished toolset, not just the items below.
 | UW-decompile | games.toml `[uw]` windows wrong for banks 7, 10, 13 and 59 (all `$8000`) | row N |
 | UW-decompile | Bank 59: 966 bytes of executed native code with no labels, not in `native_banks` | row B CPU log |
 | UW-decompile | `$22B0A` named twice: `nat_17_0b0a` at `$AB0A` (bank 17 runs at `$8000`) vs `fleet_leaf_8b0a` | row N collision |
+| UW-decompile | `trace_boot` never gets past the title: after one dispatch (bank 2, frame 7) it spins in the fixed bank ($FDxx/$F3xx) for all of 2M and 6M steps. Its stubs (NMI every 8000 steps, $9F/$AE cleared by hand, the button script) don't satisfy whatever the boot waits on. The bus faithfully reproduces the old run; the stall is the tool's. | row P2 |
+| game-annotation | `mappy/label_leaves.py` and `obj_record.py` still `sys.path.insert` koei-nes's tools for the disassembler (row B leftovers; `emu_harness.cpu.m6502.disasm` replaces it) | row P2 |
 | UW-decompile | `native_banks.walk_body` is a private copy of the row-E signature | row B residue |
 | GemFire-decompiler | Bank 2 is unwalked code at `$8000`: 48 bytecode stubs, no labels, not in `code_banks`. games.toml says `$A000`. | row N |
 | na2-decompiler | 139 labels outside their bank's window, mostly `*_data_A0xx` names filed under the `$8000` bank that uses them. They belong under the `$A000` partner bank, and `locate` puts them on the wrong byte; 3 of them displace correct names in the `.mlb`. Bank 28 (sound) runs at `$8000`; the profile says `$A000`. | row N `window_check` |
