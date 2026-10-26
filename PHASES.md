@@ -112,6 +112,12 @@ engines (NA1's default mislabelled 26 BK subs); confirm a field when a data valu
 name dedicated semantic globals, leave scratch registers generic; one or two matching observations can
 be coincidence.
 
+**When to stop** (Chris, 2026-10-26): the phase exists so the code walk can read. Readable data (text,
+records) gets real names; opaque data (level, sound, graphics, jump tables) only needs a known start
+and kind, and the code that reads it says what it is. It does not have to be perfect: stop when every
+data region has a start and a kind. Native track: run the title's own walkers on a read-logging bus
+for exact extents and text, and drive its sound engine one trigger at a time (Mappy `rom_data.py`).
+
 ## 4. Structure (`structure`)
 
 **Gate:** Primitives probed against the live handler; VM round-trip byte-identical; one call graph with a leaves-first order.
