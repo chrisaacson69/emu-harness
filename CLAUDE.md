@@ -39,6 +39,7 @@ emu_harness/               the importable package: product code only
   build/                   the build tool: phase_table.toml, the roadmap template, the verbs (`-m emu_harness`)
   vm/koei/{nes,snes}/docs/ the KOEI engine knowledge (moved from koei-nes / koei-snes); snes/CLAUDE.md = its rules
 tools/                     CLI entry points (thin; logic lives in the package)
+workflows/                 the walks' agent orchestration (Workflow scripts); a title's facts come in its walk-context.json
 tests/                     pytest; test_constitution runs the import contracts
 spike/<backend>/           probes and smoke tests: exploratory, not product
 pyproject.toml             the package + the import contracts (the constitution)

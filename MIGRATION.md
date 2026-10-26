@@ -64,6 +64,12 @@ on every pair checked below), so the role table was built by reading the docstri
 6. **The walk skills bind to tools that live in one game.** `/label-walk` runs
    `PROJ/tools/label-walk-{prep,apply}.py`, which exist only in na1-decompiler. AeroBiz wrote its own
    `walk_prep` / `walk_apply` / `walk_harvest` instead.
+   **Resolved 2026-10-26:** the three vault walk skills are retired. Their method is PHASES.md §5; their
+   Workflow scripts are `workflows/{label,data,var}-walk.workflow.js`, with every title fact (name,
+   layer paths, xref commands, caveats) moved into the title's `walk-context.json` (NA1's first). The
+   scripts' NA1 paths had gone stale (`decompiled/`, `disasm/`, `tools/vm_decompile.py`; now
+   `source/4-c/`, `source/2-asm-vm/`, `emu_harness.vm.koei.nes.vm_decompile`), which is why the
+   facts now live with the title.
 7. **Two profile registries.** `koei-nes/tools/games.toml` and `koei-snes/tools/games.toml`, with
    different code reading each.
 8. **Graduation left originals behind.** na1's `render-portrait`, `render-strategic-map`,
@@ -541,7 +547,8 @@ the registry writers.
 **Not yet:** one apply driver for every title. The skills claim to be target-agnostic, but the
 write + regen step needs each title's source layout (`source/4-c/bank_NN.c`, `source/c/bankN.c`,
 `src/<MODULE>.c` …). That is profile data no title declares yet; it belongs with the source-ladder
-revisit.
+revisit. (2026-10-26: `walk-context.json` now declares it for the workflows; NA1's is the first. The
+apply drivers still read their own.)
 
 ## Row K done: one data xref for the KOEI NES titles (2026-10-23)
 

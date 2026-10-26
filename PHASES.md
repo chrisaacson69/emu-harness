@@ -146,9 +146,43 @@ moment a ground truth and a cheap check exist.
 
 | Track | Commands |
 |---|---|
-| both | The walks: vault skills `/label-walk`, `/data-walk` (provenance + analytical lanes), `/var-walk`; their deterministic half is *library* `walk.prep` (frontier, levels, clusters) and `walk.guard` (only renames; exit 2 = stop) |
+| both | The walks (below): the title's prep → `workflows/{label,data,var}-walk.workflow.js` with the title's `walk-context.json` as `context` → the title's apply (writes, regenerates, guards). Deterministic half: *library* `walk.prep` (frontier, levels, clusters) and `walk.guard` (only renames; exit 2 = stop) |
 | vm | Cross-title drift: `py -3.14 -m emu_harness.vm.koei.nes.match family` (proposals; the title's revisit applies them) |
 | native | Routine signatures for naming: *library* `passes.native.routine_listing` |
+
+**The walks.** Three walks name a title's symbols: **label** (anonymous routines), **data** (ROM tables and
+blobs, RAM variables) and **var** (positional frame slots, VM track). Each is a loop of batches, and the
+regeneration between batches is the fixpoint: new names reach every use, so the next batch reads less
+anonymous code. Run leaves first, so a routine is named after its callees.
+
+- **Target.** Name the title by its logical name and resolve its path through the vault's
+  `.claude/local-paths.md`; a missing entry means ask, never guess. A title qualifies by the artifacts
+  it has, not by publisher or console: a symbol table (the single source of truth), a readable layer,
+  a **lower layer** for the verifier, a prep / apply pair, and a `walk-context.json` (title, layer
+  paths, xref commands, caveats; NA1's is the worked example). **No lower layer, stop:** the verifier
+  must read a different, lower artifact than the proposer, or the run only rubber-stamps.
+- **Per batch.** (1) The title's **prep** emits the next batch as JSON (leaves first, with the named
+  context as `seeds`; pass bank-specific landmarks once). (2) **Workflow**:
+  `Workflow({ scriptPath: "<emu-harness>/workflows/<walk>-walk.workflow.js", args: {...prep, context:
+  <walk-context.json>} })`: propose from the readable layer, then an independent verifier at the lower
+  layer; it returns verdicts and writes nothing. (3) The title's **apply** writes the survivors,
+  regenerates, runs `walk.guard` (pure renames, no cross-bank bleed; exit 2 = stop and inspect) and
+  commits. The verifier is the check, so applying its verdicts is not a shortcut; the guard is the only
+  gate on the write.
+- **Data.** Three lanes, deterministic first. *Oracle*: strings, whose decoded text is the ground truth.
+  *Provenance*: tables and blobs named after the named routine that reads them (`<reader>_data_<addr>`,
+  vague but correct), then the blobs behind each labelled pointer table, counted by what the reader
+  indexes. *Analytical*: only the residue that deserves a real name goes to `data-walk`. Done when the
+  title's frontier (every operand into unlabelled data, grouped by base with its named readers; a field
+  of a labelled record is not a gap) is 0.
+- **Var.** Name a slot only if it has one role across the whole routine; a reused slot stays positional.
+  Evidence is the routine body and caller propagation (what each caller pushes). `single: true` fuses
+  propose and verify into one agent per routine: half the agents, no independent verifier, so the
+  coordinator skims the verdicts before apply.
+- **Native track.** The same loop, without the workflows when the routines are few: the coordinator
+  reads the code, a census (the emulator's write-watch, a CDL, a warp) is the lower layer, and the
+  title's guarded apply writes (Mappy: `apply_names.py`, `apply_vars.py`, `data_frontier.py`,
+  `data_pointers.py`).
 
 **Lessons** (*Naming*): the symbol table plus regeneration is multi-pass compilation backwards; leaves
 first, then a top-down verify (a routine's first ops lie about its role); propose from the C, verify at
