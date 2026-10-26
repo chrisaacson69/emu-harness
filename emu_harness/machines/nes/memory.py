@@ -145,3 +145,23 @@ def window_votes(buf: bytes, entries: set[int], bases: tuple[int, ...] = (0x8000
     idx = range(1, len(buf) - 1) if after is not None else range(len(buf) - 1)
     words = [buf[i] | buf[i + 1] << 8 for i in idx if after is None or buf[i - 1] in after]
     return {b: sum(1 for w in words if (w - b) in entries) for b in bases}
+
+
+PPU_REGS = ("CTRL", "MASK", "STATUS", "OAMADDR", "OAMDATA", "SCROLL", "ADDR", "DATA")
+
+
+def register_name(addr: int) -> str | None:
+    """The NES CPU-visible hardware register at `addr` ($2000-$2007 as listed, $4014 OAM DMA,
+    $4016/$4017 the pads, $4000-$4013/$4015 the APU), or None. The PPU mirrors at $2008-$3FFF
+    are not folded (as Mappy's leaf labeler had it)."""
+    if addr == 0x4014:
+        return "OAMDMA"
+    if addr in (0x4016, 0x4017):
+        return "JOYPAD"
+    if 0x2000 <= addr <= 0x2007:
+        return "PPU:" + PPU_REGS[addr - 0x2000]
+    if addr == 0x4015:
+        return "APU:STATUS"
+    if 0x4000 <= addr <= 0x4013:
+        return "APU:$%04X" % addr
+    return None

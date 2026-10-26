@@ -861,6 +861,52 @@ Oct 2 original (md5 `d6dd38b5…`); `tests/test_battery.py` pins it with a stubb
 
 88 tests pass.
 
+## Row R done, the toolset is complete (2026-10-26)
+
+Static RE of a native 6502 game: Mappy's pipeline, which took a 16K NROM game from a trace's 31%
+code coverage to 64% and a connected call graph, made generic.
+
+**Library:**
+- `cpu/m6502/coverage.trace_coverage`: run on the core with a periodic interrupt, record the code
+  bytes executed, JSR/JMP targets and JMP (ind) resolutions (the "all data by default" inversion).
+- `passes/native.py`, one function per idiom that hides code from descent, over a `NativeMap`
+  (window plus code and data bitmaps; `reach` = the shared descent, from Mappy's `code_map`):
+  - `dispatch_tables`: `LDA tbl,X / STA ptr / LDA tbl+1,X / STA ptr+1 / JMP (ptr)`, back-scanned
+    and iterated to a fixpoint;
+  - `stored_pointer_installs`: `LDA #lo / STA v / LDA #hi / STA v+1`, and the RTS-trick pointer - 1;
+  - `pointer_runs`: 3+ code pointers in undecoded bytes;
+  - `partition_edges`, `owner`, `reachable`: the call graph by contiguous partition. This was four
+    copies in Mappy.
+  - `field_census`: record fields from `(ptr),Y` with a constant Y and from `table,X`;
+  - `routine_listing`: a listing plus a naming signature (hardware, zero page, RAM, loop, size).
+- `machines/nes/memory.register_name`: the NES register names, from `label_leaves`.
+
+**Mappy, thin:** `code_map`, `trace_codegraph`, `jump_tables`, `stored_pointers`,
+`pointer_tables`, `label_leaves`, `obj_record`. CLIs and outputs are unchanged. `trace_codegraph`
+also dropped its private NROM stub for `machines/nes/bus.Bus`, which gives the same coverage
+bitmap. `static_expand`'s target-search table finder stays in Mappy: it is the earlier method that
+the jump-table idiom replaced, and it already reaches through `code_map`.
+
+**Oracle.** The old pipeline and the new one each ran end to end in a scratch copy of the folder:
+
+| Compared | Result |
+|---|---|
+| 7 stdouts (trace, static_expand, jump_tables, stored_pointers, pointer_tables, label_leaves, obj_record) | identical |
+| 8 files (coverage.bin, codegraph.txt, coverage_static.bin, routines.txt, coverage_full.bin, jump_tables.txt, routines_full.txt, coverage_full2.bin) | identical |
+| `label_leaves one / leaves-remaining / frontier / show`, `obj_record fields / field 3 / field 0xD` (209 lines) | identical |
+
+**Against the committed files** (the ledger's pass condition), all differences predate R and are
+named:
+- `codegraph.txt` is from an older tracer (4,940 bytes, 158 edges vs today's 5,024 / 162); it was
+  already on the revisit list (row C).
+- `routines*.txt` hold the same sets in canonical order (row B).
+- `jump_tables.txt` is **curated**: the six generated tables plus three hand-added ($CC15, $CF69,
+  $D126). Don't regenerate it.
+
+`tests/test_native.py` builds a program with one of each idiom. 95 tests pass. **Row R is closed,
+and with it the toolset (rows A to R; G stopped at G1 by decision).** Next: the per-project revisits
+below, one session each.
+
 ## Row Q done: trace decoding (2026-10-26)
 
 Two trace kinds. **Mesen's GUI trace log** (text, one line per instruction) was re-parsed by
@@ -1614,7 +1660,7 @@ finished toolset, not just the items below.
 | UW-decompile | Bank 59: 966 bytes of executed native code with no labels, not in `native_banks` | row B CPU log |
 | UW-decompile | `$22B0A` named twice: `nat_17_0b0a` at `$AB0A` (bank 17 runs at `$8000`) vs `fleet_leaf_8b0a` | row N collision |
 | UW-decompile | `trace_boot` never gets past the title: after one dispatch (bank 2, frame 7) it spins in the fixed bank ($FDxx/$F3xx) for all of 2M and 6M steps. Its stubs (NMI every 8000 steps, $9F/$AE cleared by hand, the button script) don't satisfy whatever the boot waits on. The bus faithfully reproduces the old run; the stall is the tool's. | row P2 |
-| game-annotation | `mappy/label_leaves.py` and `obj_record.py` still `sys.path.insert` koei-nes's tools for the disassembler (row B leftovers; `emu_harness.cpu.m6502.disasm` replaces it) | row P2 |
+| game-annotation | ~~`mappy/label_leaves.py` and `obj_record.py` still `sys.path.insert` koei-nes's tools for the disassembler~~ **Resolved in row R** (both on `passes/native`). Also: `label_leaves` read the ROM relative to the cwd; it now reads it beside itself. | row P2 |
 | UW-decompile | `native_banks.walk_body` is a private copy of the row-E signature | row B residue |
 | GemFire-decompiler | Bank 2 is unwalked code at `$8000`: 48 bytecode stubs, no labels, not in `code_banks`. games.toml says `$A000`. | row N |
 | na2-decompiler | 139 labels outside their bank's window, mostly `*_data_A0xx` names filed under the `$8000` bank that uses them. They belong under the `$A000` partner bank, and `locate` puts them on the wrong byte; 3 of them displace correct names in the `.mlb`. Bank 28 (sound) runs at `$8000`; the profile says `$A000`. | row N `window_check` |
