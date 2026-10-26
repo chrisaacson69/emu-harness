@@ -69,7 +69,7 @@ paths.native = []
 key  = "assets"
 name = "Assets"
 gate = "Renders come from ROM bytes through the library and match the live PPU."
-paths.common = ["emu_harness/machines/nes/ppu.py", "emu_harness/machines/nes/canvas.py"]
+paths.common = ["emu_harness/machines/nes/ppu.py", "emu_harness/machines/nes/canvas.py", "emu_harness/machines/nes/ppuport.py", "emu_harness/machines/nes/bus.py"]
 paths.vm     = ["emu_harness/vm/koei/nes/assets"]
 paths.native = []
 
@@ -77,6 +77,6 @@ paths.native = []
 key  = "live"
 name = "Live verification"
 gate = "The game's own routine runs over live RAM for every input, and a planted fault fails the check."
-paths.common = ["emu_harness/backends/mesen", "emu_harness/machines/nes/live.py", "emu_harness/machines/nes/trace.py", "emu_harness/machines/nes/bus.py", "emu_harness/cpu/m6502/cpu.py"]
+paths.common = ["emu_harness/backends/mesen", "emu_harness/machines/nes/live.py", "emu_harness/machines/nes/trace.py", "emu_harness/machines/nes/ppuport.py", "emu_harness/machines/nes/bus.py", "emu_harness/cpu/m6502/cpu.py"]
 paths.vm     = ["emu_harness/vm/koei/nes/nobunaga_vm.py"]
 paths.native = []
