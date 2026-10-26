@@ -55,27 +55,40 @@ class Flow:
     inline: set[int] = field(default_factory=set)       # inline-bridge operand bytes (data)
     calls: dict[int, int] = field(default_factory=dict)  # JSR site -> target (any address)
     jumps: dict[int, int] = field(default_factory=dict)  # JMP abs site -> target (any address)
+    halts: dict[int, str] = field(default_factory=dict)  # where a path stopped with no terminator
 
 
 def flow(win: Window, entry: int, *, inline: dict[int, int] | None = None,
          follow: Callable[[int], bool] | None = None, data: frozenset[int] = frozenset(),
-         stop_brk: bool = False, end: int | None = None, into_jmp: bool = True) -> Flow:
+         stop_brk: bool = False, end: int | None = None, into_jmp: bool = True,
+         noreturn: frozenset[int] = frozenset()) -> Flow:
     """Walk one routine from `entry`. `follow(addr)` vetoes entering a JMP target (e.g. a KOEI
     bytecode stub); `end` stops at an address (the next routine); `into_jmp=False` ends a path at
-    any JMP instead of continuing at its target."""
+    any JMP instead of continuing at its target; a JSR to a `noreturn` target ends the path (a
+    dispatcher that pulls its return address and jumps through the words after the call).
+
+    `halts` records each path that stopped without a terminator, by the address it could not
+    decode: "illegal" (undocumented opcode), "data" (a known data byte), "brk" (with `stop_brk`),
+    "truncated" (an instruction past the window's end), "window" (fell out of the window). A path
+    that reaches another path's instruction, or `end`, is a join, not a halt."""
     inline = inline or {}
     buf, f, work = win.buf, Flow(entry), [entry]
     while work:
         pc = work.pop()
         while (o := win.offset(pc)) is not None:
             a = win.base + o
-            if a in f.starts or a in data or (end is not None and a >= end):
+            if a in f.starts or (end is not None and a >= end):
+                break
+            if a in data:
+                f.halts[a] = "data"
                 break
             op = buf[o]
             if op not in OPS:
+                f.halts[a] = "illegal"
                 break
             ln = 1 + MODE_LEN[OPS[op][1]]
             if o + ln > len(buf):                     # truncated at the end of the window
+                f.halts[a] = "truncated"
                 break
             f.starts.add(a)
             f.operands.update(range(a + 1, a + ln))
@@ -88,14 +101,21 @@ def flow(win: Window, entry: int, *, inline: dict[int, int] | None = None,
                 if tgt in inline:                     # the bridge returns past its inline bytes
                     f.inline.update(range(a + ln, a + ln + inline[tgt]))
                     nxt = (nxt + inline[tgt]) & 0xFFFF
+                if tgt in noreturn:
+                    break
             elif op == JMP:
                 f.jumps[a] = tgt
                 if into_jmp and tgt in win and (follow is None or follow(tgt)):
                     work.append(tgt)
                 break
-            if op in (RTS, RTI, JMP_IND) or (stop_brk and op == BRK):
+            if stop_brk and op == BRK:
+                f.halts[a] = "brk"
+                break
+            if op in (RTS, RTI, JMP_IND):
                 break
             pc = nxt
+        else:
+            f.halts[pc] = "window"
     return f
 
 
@@ -126,6 +146,12 @@ class Descent:
         sometimes it is a real trick (the `BIT abs` opcode that hides a 2-byte instruction). Reported,
         not resolved: which flow got there first says nothing about which is right."""
         return self.starts & self.operands
+
+    def halts(self) -> dict[int, str]:
+        """Every flow's halts (see `flow`): where a path ran into something it could not decode. Like
+        `overlaps`, a conflict to explain, not a verdict: a branch that is always taken, or a JSR to a
+        routine that never returns, leaves a dead path that halts on the data after it."""
+        return {a: k for f in self.flows.values() for a, k in f.halts.items()}
 
     def callers(self) -> dict[int, set[int]]:
         """callee -> entries whose own flow calls it (a site shared by two flows counts for both)."""

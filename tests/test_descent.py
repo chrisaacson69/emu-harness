@@ -106,3 +106,21 @@ def test_listing_verdicts():
     text = ("b00_8000:   lda #$01                    ; 0:  a9 01\n"
             "            hex 12 34               ; 2:  12 34\n")
     assert listing_verdicts(text, 5) == ["I", "O", "D", "D", ""]
+
+
+def test_halts_name_what_stopped_a_path():
+    w = win(0xD0, 0x02,          # 8000 bne 8004: the fall-through runs into $02
+            0x02, 0xFF,          # 8002 undocumented
+            0xEA, 0x00)          # 8004 nop, 8005 brk
+    f = flow(w, 0x8000, stop_brk=True)
+    assert f.halts == {0x8002: "illegal", 0x8005: "brk"}
+    assert flow(w, 0x8004, data=frozenset({0x8005})).halts == {0x8005: "data"}
+    assert flow(w, 0x8004).halts == {0x8006: "illegal"}        # brk is an instruction without stop_brk; $FF pad
+    assert flow(Window(bytes([0xEA]), 0x8000), 0x8000).halts == {0x8001: "window"}
+    d = descend(w, [0x8000, 0x8004], stop_brk=True)
+    assert d.halts() == {0x8002: "illegal", 0x8005: "brk"}
+
+
+def test_joins_and_terminators_are_not_halts():
+    w = win(0xD0, 0x01, 0xEA, 0x60)   # 8000 bne 8003 / 8002 nop / 8003 rts: both paths join at the rts
+    assert flow(w, 0x8000).halts == {}

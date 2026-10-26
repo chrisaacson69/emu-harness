@@ -79,13 +79,20 @@ second VM-entry stub (`$E2E3` is an ABI, not a dialect); recon corrections can b
 | both | Seeded descent: *library* `cpu.m6502.descent.descend`; listing: `py -3.14 -m emu_harness.cpu.m6502.disasm <rom.nes> <bank>` |
 | vm | Native floor (signatures against ALL siblings): `py -3.14 -m emu_harness.vm.koei.nes.native_floor <title>` then `--check`, `--toml`; hand-read the residue |
 | vm | Census every call method: trampolines, run-bank syscall, co-resident direct calls, function pointers (`py -3.14 -m emu_harness.vm.koei.nes.callgraph <title> --indegree`) |
-| native | Trace → descent → idioms: *library* `cpu.m6502.coverage.trace_coverage`, then `passes.native.dispatch_tables`, `stored_pointer_installs`, `pointer_runs` to a fixpoint |
+| native | Trace → descent → idioms: *library* `cpu.m6502.coverage.trace_coverage`, then `passes.native.dispatch_tables` (`inline=` for dispatchers that read the words after their JSR), `stored_pointer_installs`, `pointer_runs` to a fixpoint |
+| both | Measure the gate: *library* `NativeMap.conflicts()` after the final reach (overlaps + halts, from `Descent.overlaps` / `Descent.halts`), each passed through `passes.native.explain`; anything it cannot name is unexplained |
 
 **Lessons** (*Code discovery*): about a third of native "residue" is phantoms (`20 xx xx` in data):
 drop or mark DATA, never name; seeded descent beats a linear sweep; don't rely on one call method (UW's
 "0 subsystem edges" was 34); 100% of the walk is not 100% of the program when dispatch is indirect; a
 true entry carries the prologue (a header is not the sub); a label sits on an instruction start;
-real-time order is trace (30%) → descent (60%) → jump-table sweep (96.7%).
+real-time order is trace (30%) → descent (60%) → jump-table sweep (96.7%). From the Mappy revisit
+(2026-10-26): a table reader must stop at its own handler and at executed code (Mappy's `$C356` read
+its last handler's `lda #$ae` as a 20th entry, inventing two routines that were then *named*); a JSR
+to a dispatcher that pops its return address never returns, so the bytes after it are a table, not
+code (18 handlers found); an "install" is a handler only if a `JMP (ind)` reads its variable (all 4
+of Mappy's were data pointers, counters or mis-pairs); a 2-byte routine with JSR callers is usually
+a fall-through entry, not a phantom: check the trace before marking DATA.
 
 ## 3. Data, pure lane (`data`)
 

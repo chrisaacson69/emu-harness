@@ -9,6 +9,7 @@ coverage to 64% and a connected call graph. Each pass is an idiom that hides cod
                            seed every handler, mark the table as data, repeat to a fixpoint
   stored_pointer_installs  LDA #<h / STA v / LDA #>h / STA v+1: a handler installed by data flow
   pointer_runs             3+ consecutive words in undecoded bytes that each point at decoded code
+  explain                  names the deliberate idioms behind a walker conflict (`conflicts`)
   partition_edges          a call graph by the contiguous partition (an instruction belongs to the
                            greatest entry at or below it): JSR / JMP abs edges
   field_census             a record's fields from (ptr),Y with a constant Y and from table,X
@@ -33,11 +34,13 @@ BRANCHES = {0x10, 0x30, 0x50, 0x70, 0x90, 0xB0, 0xD0, 0xF0}
 
 class NativeMap:
     def __init__(self, win: Window, code: bytearray | None = None, is_data: bytearray | None = None,
-                 stop_brk: bool = True):
+                 stop_brk: bool = True, noreturn=()):
         self.win, self.buf = win, win.buf
         self.code = code if code is not None else bytearray(len(win.buf))
         self.is_data = is_data if is_data is not None else bytearray(len(win.buf))
         self.stop_brk = stop_brk
+        self.noreturn = frozenset(noreturn)   # JSR targets that never return (see descent.flow)
+        self.descent = None                  # the last reach's Descent, for `conflicts`
 
     def off(self, a: int) -> int:
         return (a - self.win.base) % len(self.buf)
@@ -66,18 +69,57 @@ class NativeMap:
         JSR / JMP target reached; every reached byte is marked in `code`."""
         seeds = set(seeds)
         data = {self.win.base + n for n in range(len(self.buf)) if self.is_data[n]}
-        d = descend(self.win, seeds, data=data, stop_brk=self.stop_brk)
+        d = self.descent = descend(self.win, seeds, data=data, stop_brk=self.stop_brk,
+                                   noreturn=self.noreturn)
         for a in d.starts | d.operands:
             self.code[a - self.win.base] = 1
         jumped = {t for f in d.flows.values() for t in f.jumps.values() if t in self.win}
         return {self.win.canon(a) for a in seeds | jumped if a in self.win} | d.entries, d.starts
 
+    def conflicts(self) -> dict[str, list[int]]:
+        """The last reach's walker conflicts, by kind: "overlap" (a byte decoded both as an
+        instruction start and as an operand) and each halt kind of `descent.flow`. The discover
+        gate wants none unexplained."""
+        out: dict[str, list[int]] = {}
+        if self.descent is not None:
+            if ov := self.descent.overlaps():
+                out["overlap"] = sorted(ov)
+            for a, k in sorted(self.descent.halts().items()):
+                out.setdefault(k, []).append(a)
+        return out
 
-def dispatch_tables(m: NativeMap, seeds: set, *, back: int = 30, max_entries: int = 64):
-    """The indexed-dispatch idiom, to a fixpoint. `seeds` grows in place. -> (tables
-    {site: (base, [handlers])}, every JMP (ind) site seen, routines, instruction starts
-    {offset: opcode})."""
+
+def explain(m: NativeMap, kind: str, a: int) -> str | None:
+    """Name the idiom behind one walker conflict (`NativeMap.conflicts`), or None. Two are
+    deliberate code, not a misread:
+      "bit-skip"     an overlap inside `BIT abs` ($2C): a second entry hides in its operand
+                     (ldx #1 / bit $02A2 = ldx #2 shares a tail; Mappy $F743/$F746)
+      "dead-path"    a halt right after a branch and its complement (bne x / beq y): the
+                     fall-through never runs (Mappy $CC3D/$CC3F)
+    Anything else stays unexplained, and the discover gate counts it."""
+    starts = m.descent.starts if m.descent is not None else set()
+    if kind == "overlap":
+        for back in (1, 2):
+            if m.canon(a - back) in starts and m.byte(a - back) == 0x2C:
+                return "bit-skip"
+    else:
+        b1, b2 = m.canon(a - 4), m.canon(a - 2)
+        if {b1, b2} <= starts and m.byte(b2) in BRANCHES and m.byte(b1) == m.byte(b2) ^ 0x20:
+            return "dead-path"
+    return None
+
+
+def dispatch_tables(m: NativeMap, seeds: set, *, back: int = 30, max_entries: int = 64,
+                    inline=()):
+    """The indexed-dispatch idiom, to a fixpoint. `seeds` grows in place. `inline` names
+    dispatchers that read a word table placed after the JSR that calls them (they join
+    `m.noreturn`); each such call site is a table site too. A table ends before a word that is
+    known code or a handler it already holds: Mappy's $C356 read the first instruction of its own
+    last handler as a 20th entry. -> (tables {site: (base, [handlers])}, every JMP (ind) and
+    inline-dispatch site seen, routines, instruction starts {offset: opcode})."""
     starts, ptr_of = {}, {}
+    inline = {m.canon(a) for a in inline}
+    m.noreturn |= inline
 
     def fixpoint(seedset):
         routines, st = m.reach(seedset)
@@ -86,6 +128,8 @@ def dispatch_tables(m: NativeMap, seeds: set, *, back: int = 30, max_entries: in
             starts[n] = m.buf[n]
             if m.buf[n] == JMP_IND:
                 ptr_of[n] = m.word(a + 1)
+            elif m.buf[n] == JSR and m.canon(m.word(a + 1)) in inline:
+                ptr_of[n] = None
         return routines
 
     def resolve(site_n):
@@ -106,6 +150,9 @@ def dispatch_tables(m: NativeMap, seeds: set, *, back: int = 30, max_entries: in
         for _ in range(max_entries):
             if m.is_data[m.off(a)] and a != base:
                 break
+            here = {m.canon(a), m.canon(a + 1)}
+            if any(m.code[m.off(x)] for x in here) or here & {m.canon(e) for e in ents}:
+                break
             w = m.word(a)
             if m.in_code(w) and m.legal(w):
                 ents.append(w)
@@ -119,9 +166,9 @@ def dispatch_tables(m: NativeMap, seeds: set, *, back: int = 30, max_entries: in
         fixpoint(seeds)
         new = False
         for n, op in sorted(starts.items()):
-            if op == JMP_IND and n not in known:
+            if n in ptr_of and n not in known:
                 known.add(n)
-                base = resolve(n)
+                base = m.canon(n) + 3 if op == JSR else resolve(n)
                 if base is None:
                     continue
                 ents = read(base)
@@ -139,8 +186,11 @@ def dispatch_tables(m: NativeMap, seeds: set, *, back: int = 30, max_entries: in
 
 def stored_pointer_installs(m: NativeMap, starts: dict, *, window: int = 16, look: int = 6):
     """LDA #imm then STA (zp|abs) pairs whose immediates, on adjacent targets within `window`
-    bytes, form a code pointer (or pointer - 1, the RTS-trick convention). `starts` maps window
-    offsets to (opcode, length). -> [(install site, handler)]."""
+    bytes, form a code pointer (or pointer - 1, the RTS-trick convention), stored into a variable
+    some decoded `JMP (ind)` jumps through. Without that consumer a pair is a data pointer or a
+    16-bit counter: all four of Mappy's former "installs" were. `starts` maps window offsets to
+    (opcode, length). -> [(install site, handler)]."""
+    jumped = {m.word(m.win.base + n + 1) for n, (op, _) in starts.items() if op == JMP_IND}
     events = []
     for n in sorted(starts):
         op, ilen = starts[n]
@@ -165,11 +215,13 @@ def stored_pointer_installs(m: NativeMap, starts: dict, *, window: int = 16, loo
             if a2 - a > window:
                 break
             if t2 == t + 1:
-                lo, hi = imm, imm2
+                lo, hi, var = imm, imm2, t
             elif t2 == t - 1:
-                lo, hi = imm2, imm
+                lo, hi, var = imm2, imm, t2
             else:
                 continue
+            if var not in jumped:
+                break
             p = lo | (hi << 8)
             for cand in (p, (p + 1) & 0xFFFF):
                 if m.in_code(cand) and m.legal(cand):
