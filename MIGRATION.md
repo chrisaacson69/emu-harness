@@ -1674,6 +1674,11 @@ entries, where they are closed. First project: game-annotation (Mappy).
 | LEmp-decompiler | Bank 27 (sound) runs at `$8000`; the profile says `$A000`. | row N `window_check` |
 | UW-decompile | `disasm_native` now renders 15 banks at their profile window (banks 8 and 17 among the committed listings), so a fresh run differs from the committed listings until the UW revisit regenerates them. 18 `nat_8_*` / `nat_17_*` labels carry `$Axxx` CPU addresses. | row N |
 | game-annotation (Mappy) | ~~`render_level.py` `sys.path`-inserts nes-render and na1's `na1dream.cpu6502`, with a private NROM bus and PPU stub~~ **Resolved 2026-10-26:** `machines/nes/ppuport.PPUPort` (the register model, factored out of `trace.PPUWrites`, which now builds on it: identical on the 12 na1 combat traces with uploads) plugs into `Bus(ppu=)`; `render_level` runs on `cpu.m6502` + `Bus` + `Canvas`. All 16 rounds: VRAM, pixels vs the old tool and vs the committed PNGs identical. | build-tool trial |
+| UW-decompile | Still imports koei-nes's aliases by `sys.path`: `tools/disasm_native.py` (`../koei-nes/tools`), `native_banks.py` and `prg.py` (hardcoded `C:\` path). Import `emu_harness` directly; output identical before and after. **Blocks archiving koei-nes.** | koei retirement |
+| ro3k-decompiler | Still imports koei-nes's aliases by `sys.path`: `tools/atlas/atlas.py` (`koei-nes/assets` + `tools`), `atlas/officer_stats.py`, `atlas/scenario.py`, `tools/handler_match.py`. **Blocks archiving koei-nes.** | koei retirement |
+| GemFire-decompiler | `tools/inbank_native.py` still imports koei-nes's aliases by `sys.path`. **Blocks archiving koei-nes.** | koei retirement |
+| rot3k2-decompiler | `tools/regen_source.py` runs `../koei-nes/tools/koei_vm.py` by path (= `py -3.14 -m emu_harness.vm.koei.nes.titles`). **Blocks archiving koei-nes.** | koei retirement |
+| AeroBiz-decompiler | `tools/walk_apply.py` runs `../koei-snes/tools/gen_layers.py` by path with `cwd` there (= `py -3.14 -m emu_harness.vm.koei.snes.gen_layers`). The only koei-snes dependent left: **blocks archiving koei-snes.** | koei retirement |
 | game-annotation (Mappy) | `jump_tables.py` overwrites the curated `jump_tables.txt` (3 hand-added tables, 673a53d) | row B |
 | game-annotation (Mappy) | The committed `coverage.bin` / `codegraph.txt` (4,940 bytes covered, 158 edges) come from an older tracer; the current `trace_codegraph.py 4000` gives 5,024 / 162, the same before and after row C. The static pipeline (`static_expand` ...) is seeded from the stale pair. | row C |
 | all KOEI NES titles | Committed `.mlb` files added 2026-10-23; regenerate after registry edits | row A gap |
@@ -1729,4 +1734,11 @@ entries, where they are closed. First project: game-annotation (Mappy).
 - Do the koei-nes and koei-snes repos get **archived** after step 5, as nes-harness was?
   (**nes-render was, 2026-10-26**: its last importer, Mappy `render_level`, moved to the library; repo
   archived on GitHub, local clone removed, the library's prose now names `machines.nes.ppu`.)
+  **koei-nes and koei-snes, 2026-10-26: retiring.** Their last unique content moved here: koei-nes
+  `window_check` → `vm.koei.nes.window_check` (output identical, 9 titles), `manual_to_images` →
+  `tools/` (identical images, both modes), and both repos' docs → `vm/koei/{nes,snes}/docs/`
+  (verbatim, with a path map), koei-snes's rules → `vm/koei/snes/CLAUDE.md`. Everything left in
+  them is an alias. Each is archived when its last importer (the "koei retirement" revisit rows)
+  is repointed at that project's revisit: koei-snes after AeroBiz; koei-nes after UW, ro3k,
+  GemFire and rot3k2. Mappy's `var_xref` was repointed here (output identical).
 - UW-decompile: GitHub remote, public or private? (Its siblings GemFire and LEmp are public.)

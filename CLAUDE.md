@@ -37,6 +37,7 @@ emu_harness/               the importable package: product code only
   backends/<emulator>/     client + the Lua that runs inside that emulator; its file formats (.mlb)
   machines/<console>/      pad map, vectors, battery saves, memory map for that console
   build/                   the build tool: phase_table.toml, the roadmap template, the verbs (`-m emu_harness`)
+  vm/koei/{nes,snes}/docs/ the KOEI engine knowledge (moved from koei-nes / koei-snes); snes/CLAUDE.md = its rules
 tools/                     CLI entry points (thin; logic lives in the package)
 tests/                     pytest; test_constitution runs the import contracts
 spike/<backend>/           probes and smoke tests: exploratory, not product

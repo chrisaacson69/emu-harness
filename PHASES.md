@@ -58,7 +58,7 @@ static↔runtime join means data-first; a bespoke VM gets our own decompiler.
 
 | Track | Commands |
 |---|---|
-| both | Vectors and windows: *library* `machines.nes.memory.Windows`, `window_votes` (words that land on a bank's own entries); koei-nes `tools/window_check.py <title>` checks a profile against the banks' code |
+| both | Vectors and windows: *library* `machines.nes.memory.Windows`, `window_votes` (words that land on a bank's own entries); vm: `py -3.14 -m emu_harness.vm.koei.nes.window_check <title> [-v]` checks a profile against the banks' code |
 | both | Strings: *library* `passes.strings`; VM: `py -3.14 -m emu_harness.vm.koei.nes.strings <title> dump <bank>` |
 | vm | Seed the profile from the closest sibling, then disassemble: `py -3.14 -m emu_harness.vm.koei.nes.titles disasm <title> <bank>`; SNES: `vm.koei.snes.vm_walk` |
 | vm | ISA probes: `py -3.14 tools/koei_isa_probe.py`, `tools/koei_isa_census.py` |
@@ -96,6 +96,7 @@ real-time order is trace (30%) → descent (60%) → jump-table sweep (96.7%).
 | vm | `py -3.14 -m emu_harness.vm.koei.nes.strings <title> pure --toml`; `...dataxref <title> strings --toml`, `tables --toml`, `hot --unlabeled`, `ram`; `...romdata <title> records` |
 | vm (SNES) | `vm.koei.snes.data_walk`, `vm.koei.snes.strings_snes` |
 | native | Record fields: *library* `passes.native.field_census`; RAM use from the title's xref tool (Mappy `var_xref`) |
+| both | The manual as schema oracle: `py -3.14 tools/manual_to_images.py <manual.pdf> <out_dir>` (scanned PDFs have no text layer; `.[manual]` extra) |
 
 **Lessons** (*Data*): front-load the pure-oracle data (it makes the code legible); three lanes, ORACLE
 and PROVENANCE deterministic, ANALYTICAL through propose→verify (that lane belongs to Naming); the
