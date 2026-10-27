@@ -84,20 +84,24 @@ class PPUSnapshot:
         y = ((t >> 5) & 0x1F) * 8 + ((t >> 12) & 7) + ((t >> 11) & 1) * 240
         return x, y
 
-    def frame(self, *, master=None, origin: tuple[int, int] | None = None) -> Image.Image:
+    def frame(self, *, master=None, origin: tuple[int, int] | None = None,
+              splits: list[tuple[int, tuple[int, int]]] | None = None) -> Image.Image:
         """The 256 x 240 picture from this state: background from one scroll origin (default:
-        scroll()), then sprites by the hardware rules (OAM 0 in front, behind-background bit, left
-        8-pixel masks). One scroll for the whole frame: a game that splits the screen mid-frame
-        (status bars) only matches in the part drawn with that origin. No 8-sprites-per-line
-        limit. For the exact picture use the emulator's own screenshot."""
+        scroll()), then sprites by the hardware rules (left 8-pixel masks; per pixel the opaque
+        sprite with the lowest OAM index wins, and only then does its behind-background bit
+        apply, so a behind sprite also hides the sprites under it). A game that splits the screen
+        mid-frame (a status bar) passes splits: [(first scanline, origin), ...] in order, each
+        origin a scroll() pair, the frame's origin applying above the first. No
+        8-sprites-per-line limit. For the exact picture use the emulator's own screenshot."""
         M = master or ppu.NES_MASTER
         plane = self.palette_indices()
-        ox, oy = origin or self.scroll()
+        bands = [(0, origin or self.scroll())] + list(splits or [])
         img = Image.new("RGB", (256, 240))
         px = img.load()
         opaque = [[False] * 256 for _ in range(240)]
         show_bg, left_bg = self._flag("ppu.mask.backgroundEnabled"), self._flag("ppu.mask.backgroundMask")
         for y in range(240):
+            ox, oy = next(o for first, o in reversed(bands) if first <= y)
             row = plane[(oy + y) % 480]
             for x in range(256):
                 v = row[(ox + x) % 512] if show_bg and (left_bg or x >= 8) else 0
@@ -127,7 +131,8 @@ class PPUSnapshot:
     def _sprites(self, px, opaque, M):
         pal = list(self.palette[16:32])
         left = self._flag("ppu.mask.spriteMask")
-        for i in range(63, -1, -1):                  # OAM 0 drawn last: frontmost
+        taken = [[False] * 256 for _ in range(240)]  # a sprite already decided this pixel
+        for i in range(64):                          # OAM 0 first: frontmost
             y, tile, attr, x = self.oam[i * 4:i * 4 + 4]
             if y >= 0xEF:
                 continue
@@ -143,10 +148,11 @@ class PPUSnapshot:
                     for tx in range(8):
                         c = grid[7 - ty if attr & 0x80 else ty][7 - tx if attr & 0x40 else tx]
                         X, Y = x + tx, y + 1 + dy + ty
-                        if not c or X > 255 or Y > 239 or (X < 8 and not left):
+                        if not c or X > 255 or Y > 239 or (X < 8 and not left) or taken[Y][X]:
                             continue
+                        taken[Y][X] = True
                         if attr & 0x20 and opaque[Y][X]:
-                            continue                 # behind the background
+                            continue                 # behind the background (and hiding what is under it)
                         px[X, Y] = M[sub[c] & 0x3F]
 
 
