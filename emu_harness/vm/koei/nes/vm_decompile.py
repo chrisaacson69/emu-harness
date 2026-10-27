@@ -56,20 +56,55 @@ def _load_asset_enums(game="na1"):
 
 _ARG_ENUMS, _ENUMS = _load_asset_enums()
 
-# --- Bug 1.3 fix: certified ext-op body overrides (2026-06-10) ----------------
-# The 5 subs whose 32-bit aux-stack math DREAM can't fold render as `// ext_op ...`
-# comments + a stub `return <arg>`. Their formulas are CERTIFIED against the real
-# ROM (tools/value-oracle.py certify-extop). Emit the certified body instead.
-# Keyed by ENTRY addr; lambda takes the (renamed) param-name list.
-# These are NA1's (certified against NA1's ROM): set_schema(game) turns them off for every other
-# title. Applied to all titles by address, they gave Genghis Khan's bank-5 $8327 (different
-# bytecode) NA1's scale_div10_capcheck formula (emu-harness MIGRATION.md row F1b).
+# --- ext-op body overrides: NA1's five 32-bit helpers ---------------------------------
+# DREAM cannot fold the 32-bit aux-stack math, so these subs print a formula instead of their body.
+# Each entry is (C lines, a model, the bank): the model is the same formula in Python, and
+# gates.cfg_gate checks it against the ROM (titles.run_sub) over an edge grid, since an override
+# has no CFG to compare. Re-derived 2026-10-27 from each sub's bytecode: the June 2026-06-10
+# versions were unsigned and dropped the guards (wrong at every branch edge and at $8000).
+# The primitives, as measured on NA1's handlers: B7 $25 sign-extends 16 -> 32, B7 $26 zero-extends,
+# $01 is a 32-bit multiply, $02 is KOEI's sdiv32, which truncates toward zero but divides by
+# |d| - 1 for a negative divisor (it one's-complements it) and gives -1 for a zero one, before the
+# sign fix. The same sdiv32 is in na2, rot3k2, bk, lemp and uw. min_word is a signed min.
+# These are NA1's: set_schema(game) turns them off for every other title (GK's bank-5 $8327 is
+# different bytecode; MIGRATION.md row F1b).
+_M32 = 0xFFFFFFFF
+
+
+def _s16(v):
+    return v - 0x10000 if v & 0x8000 else v
+
+
+def _sdiv32(a, d):
+    a = (a & _M32) - ((a & 0x80000000) << 1)
+    d = (d & _M32) - ((d & 0x80000000) << 1)
+    q = _M32 if d in (0, -1) else abs(a) // (d if d > 0 else -d - 1)
+    return (-q if (a < 0) != (d < 0) else q) & _M32
+
+
+def _muladddiv(a, b):
+    return _sdiv32(_s16(a) * _s16(b) + 9, 10) & 0xFFFF
+
+
+_SDIV32_NOTE = "// sdiv32: KOEI's 32-bit signed divide; a negative divisor d divides by |d| - 1 (ROM bug)"
 _EXTOP_OVERRIDES_NA1 = _EXTOP_OVERRIDE = {
-    0x8303: lambda p: [f"return (({p[0]} * {p[1]} + 9) / 10);    // [CERTIFIED ext-op fold vs ROM 2026-06-10]"],
-    0x8327: lambda p: [f"return (((({p[0]} * {p[1]}) / 10) >= {p[2]}) ? 0xFFFF : (({p[0]} * {p[1]}) / 10));    // [CERTIFIED ext-op fold vs ROM 2026-06-10]"],
-    0x8357: lambda p: [f"return min_word((({p[0]} * 10) / {p[1]}), {p[2]});    // [CERTIFIED ext-op fold vs ROM 2026-06-10]"],
-    0xD6B8: lambda p: [f"return (({p[0]} * {p[1]}) / {p[2]});    // [CERTIFIED ext-op fold vs ROM 2026-06-10]"],
-    0xD6DE: lambda p: [f"return (({p[0]} * 100) / ({p[0]} + {p[1]}));    // [CERTIFIED ext-op fold vs ROM 2026-06-10]"],
+    0x8303: (lambda p: [_SDIV32_NOTE,
+                        f"return (word)sdiv32((sword){p[0]} * (sword){p[1]} + 9, 10);"],
+             _muladddiv, 1),
+    0x8327: (lambda p: [_SDIV32_NOTE,
+                        f"if ((sword)math32_muladddiv({p[0]}, {p[1]}) > (sword){p[2]}) return 0xFFFF;",
+                        f"return (word)sdiv32((sword){p[0]} * (sword){p[1]}, 10);"],
+             lambda a, b, c: 0xFFFF if _s16(_muladddiv(a, b)) > _s16(c) else _sdiv32(_s16(a) * _s16(b), 10) & 0xFFFF, 1),
+    0x8357: (lambda p: [_SDIV32_NOTE,
+                        f"return min_word((word)sdiv32((sword){p[0]} * 10, (sword){p[1]}), {p[2]});"],
+             lambda a, b, c: (lambda x: x if _s16(x) < _s16(c) else c)(_sdiv32(_s16(a) * 10, _s16(b)) & 0xFFFF), 1),
+    0xD6B8: (lambda p: [_SDIV32_NOTE,
+                        f"if (!{p[2]}) return 0xFFFF;",
+                        f"return (word)sdiv32((sword){p[0]} * (sword){p[1]}, (sword){p[2]});"],
+             lambda a, b, c: 0xFFFF if c == 0 else _sdiv32(_s16(a) * _s16(b), _s16(c)) & 0xFFFF, 15),
+    0xD6DE: (lambda p: [f"if (!{p[0]} && !{p[1]}) return 0;",
+                        f"return (word)(((dword){p[0]} * 100) / ((dword){p[0]} + {p[1]}));"],
+             lambda a, b: 0 if a == 0 and b == 0 else _sdiv32(100 * a, a + b) & 0xFFFF, 15),
 }
 
 def _apply_arg_enums(fname, args):
@@ -1003,7 +1038,7 @@ def decompile(filepath, sub_addr, labels=None, var_names=None, collect=None):
     _ov = _EXTOP_OVERRIDE.get(sub_addr)
     if _ov:
         _pnames = [seg.split()[-1] for seg in params.split(", ")] if params != "void" else []
-        for _ln in _ov(_pnames):
+        for _ln in _ov[0](_pnames):
             print(f"    {_ln}")
         print("}")
         if collect is not None:

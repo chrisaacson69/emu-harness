@@ -232,3 +232,24 @@ def test_ext_compare_names_measured_and_a_swapped_name_fails():
     names[0xF47E] = "cmp32_a_lt_b_signed_f47e"          # the gt handler, given lt's name
     bad = [r for r in compare_probe.check_ext("na1", names=names) if not r[-1]]
     assert [(r[0], r[4]) for r in bad] == [(0x0A, "sgt")]
+
+
+def test_ext_op_overrides_match_the_rom_and_a_wrong_model_fails():
+    """NA1's five formula overrides equal the ROM's own subs over the edge grid (cfg_gate's value
+    witness), and the June math32_3arg (c == 0 -> 0, unsigned) is caught."""
+    import pytest
+    from emu_harness.vm.koei.nes.titles import game_cfg
+    from emu_harness.vm.koei.nes import vm_decompile as VC
+    from emu_harness.vm.koei.nes.gates import cfg_gate
+    if not game_cfg("na1")["_rom"].exists():
+        pytest.skip("na1-decompiler ROM not present")
+    VC.set_schema("na1")
+    small = (0, 1, 7, 10, 0x7FFF, 0x8000, 0xFFFF)
+    for stub in VC._EXTOP_OVERRIDE:
+        assert cfg_gate.override_value_check(stub, small) == [], hex(stub)
+    c_lines, _model, bank = VC._EXTOP_OVERRIDE[0xD6B8]
+    VC._EXTOP_OVERRIDE[0xD6B8] = (c_lines, lambda a, b, c: (a * b) // c if c else 0, bank)
+    try:
+        assert cfg_gate.override_value_check(0xD6B8, small)
+    finally:
+        VC._EXTOP_OVERRIDE[0xD6B8] = (c_lines, _model, bank)

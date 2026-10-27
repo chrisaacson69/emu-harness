@@ -70,10 +70,29 @@ def _fmt(cfg):
     return "\n".join(parts)
 
 
+EDGE_VALUES = (0, 1, 2, 3, 7, 9, 10, 11, 99, 100, 255, 1000, 6553, 6554, 0x7FFF, 0x8000, 0xFFFF)
+
+
+def override_value_check(stub, values=EDGE_VALUES):
+    """-> [(args, rom, model)] where an override's model disagrees with the ROM's own sub."""
+    import itertools
+    from emu_harness.vm.koei.nes import vm_decompile
+    from emu_harness.vm.koei.nes.titles import run_sub
+    _c, model, bank = vm_decompile._EXTOP_OVERRIDE[stub]
+    n = model.__code__.co_argcount
+    bad = []
+    for args in itertools.product(values, repeat=n):
+        rom, want = run_sub("na1", stub, list(args), bank=bank), model(*args)
+        if rom != want:
+            bad.append((args, rom, want))
+    return bad
+
+
 def run(banks, verbose=False, show_structured=False, hybrid=False):
     raw_fail = []        # lower(raw) != bytecode                    — HARD (witness faithful)
     struct_fail = []     # the GATED structured output != raw        — HARD (gating regression)
     fellback = []        # subs where structure_lines was rejected -> honest goto (expected)
+    override_ok, override_fail = [], []   # formula overrides, witnessed by value against the ROM
     unknown_mn = []      # (bank, sub, addr, mnemonic) — unrecognised control op
     n_subs = 0
 
@@ -90,6 +109,14 @@ def run(banks, verbose=False, show_structured=False, hybrid=False):
 
             for stub, collect in sorted(results.items()):
                 n_subs += 1
+                if collect.get('structurer') == 'override':
+                    # A printed formula has no CFG to compare: its witness is its value, the
+                    # model against the ROM's own sub over an edge grid (vm_decompile overrides).
+                    bad = override_value_check(stub)
+                    (override_fail if bad else override_ok).append((bank, stub))
+                    if bad and verbose:
+                        print(f"\nOVERRIDE != ROM  bank {bank} ${stub:04X}: {bad[:4]}")
+                    continue
                 instrs = collect['instructions']
                 bc, leaders = vm_cfg.bytecode_cfg(instrs)
                 for a, mn in vm_cfg.unknown_control_mnemonics(instrs):
@@ -118,26 +145,34 @@ def run(banks, verbose=False, show_structured=False, hybrid=False):
                 if collect.get('gated_fallback'):
                     fellback.append((bank, stub))
 
-    print(f"\nCFG gate over {n_subs} subs in banks {banks}:")
+    n_ov = len(override_ok) + len(override_fail)
+    n_cfg = n_subs - n_ov                     # the CFG checks cover the subs that print a body
+    print(f"\nCFG gate over {n_subs} subs in banks {banks} ({n_ov} printed as formula overrides):")
     print(f"  (1) witness faithfulness   lower(raw) == bytecode : "
-          f"{n_subs - len(raw_fail)}/{n_subs} pass"
+          f"{n_cfg - len(raw_fail)}/{n_cfg} pass"
           + ("" if not raw_fail else f"  — {len(raw_fail)} FAIL"))
     print(f"  (2) gated structuring is CFG-preserving           : "
-          f"{n_subs - len(struct_fail)}/{n_subs} pass"
+          f"{n_cfg - len(struct_fail)}/{n_cfg} pass"
           + ("" if not struct_fail else f"  — {len(struct_fail)} FAIL"))
     print(f"      ({len(fellback)} subs fell back to honest goto — structure_lines was "
           f"not CFG-preserving there)")
+    if n_ov:
+        print(f"  (3) formula overrides == ROM by value (edge grid) : {len(override_ok)}/{n_ov} pass"
+              + ("" if not override_fail else f"  — {len(override_fail)} FAIL"))
     if unknown_mn:
         print(f"  ! {len(unknown_mn)} unrecognised control mnemonic(s):")
         for bank, sub, a, mn in unknown_mn[:20]:
             print(f"      bank {bank} ${sub:04X} @ ${a:04X}: {mn}")
 
-    hard_fail = bool(raw_fail) or bool(struct_fail) or bool(unknown_mn)
+    hard_fail = bool(raw_fail) or bool(struct_fail) or bool(unknown_mn) or bool(override_fail)
     if hard_fail:
         print("\nHARD GATE FAILED.")
         if raw_fail:
             print("  raw-witness CFG diverged from bytecode at: "
                   + ", ".join(f"b{b}/${s:04X}" for b, s in raw_fail[:20]))
+        if override_fail:
+            print("  formula override disagrees with the ROM at: "
+                  + ", ".join(f"b{b}/${s:04X}" for b, s in override_fail))
         if struct_fail:
             print("  GATED structured output is NOT CFG-preserving at (gating bug): "
                   + ", ".join(f"b{b}/${s:04X}" for b, s in struct_fail[:20]))

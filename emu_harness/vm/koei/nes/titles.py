@@ -10,7 +10,7 @@ live in games.toml (next to this file); this driver reads them and drives the VM
 (emu_harness.vm.koei) generically.
 
   py -3.14 koei_vm.py disasm  <game> <bank> [out.asm]   # render a bank's bytecode VM-asm
-  py -3.14 koei_vm.py emulate <game> <0xSUB> [args...]  # run a bytecode sub, print result register
+  py -3.14 koei_vm.py emulate <game> <0xSUB> [args...] [--bank N] [--sram F]  # run a bytecode sub, print regL
   py -3.14 koei_vm.py games                             # list configured titles
   (or: py -3.14 -m emu_harness.vm.koei.nes.titles ...)
 
@@ -309,6 +309,33 @@ def make_vm(name):
     return vm, cfg
 
 
+def run_sub(game, sub, args, *, bank=None, frame_off=-16, sram=None, max_ops=20000):
+    """Run one bytecode sub on the title's own interpreter; -> regL (the result register).
+
+    Converted from na1-decompiler tools/value-oracle.py oracle_run (it certified NA1's ext-op probes):
+    args go into frame slots fp+0x0B, fp+0x0D, ... (the VM calling convention), and `frame_off`
+    pre-allocates locals below fp. `sub` is the stub address (its name's address); the body starts
+    5 bytes on. A sub below $C000 needs its bank."""
+    vm, cfg = make_vm(game)
+    if sub < 0xC000 and bank is None:
+        raise ValueError(f"${sub:04X} is in the switchable window: pass its bank")
+    if bank is not None:
+        vm.switch_bank(bank)
+    if sram:
+        vm.load_sram(sram)
+    stub = bytes(int(b, 16) for b in cfg["vm_entry_stub"].split())
+    if bytes(vm.mem.read(sub + k) for k in range(3)) != stub:
+        raise ValueError(f"${sub:04X} is not a bytecode stub ({cfg['vm_entry_stub']})")
+    fp = 0x05FF
+    vm.vm_fp, vm.vm_sp = fp, (fp + frame_off) & 0xFFFF
+    for i, x in enumerate(args):
+        vm.mem.write_word(fp + 11 + 2 * i, x & 0xFFFF)
+    vm.vm_pc = sub + 5
+    vm.cpu.pc = vm.DISPATCHER_ADDR
+    vm.run_until_outermost_return(max_ops=max_ops)
+    return vm.regL
+
+
 def main():
     if len(sys.argv) < 2 or sys.argv[1] == "games":
         for k, v in load_games().items():
@@ -321,9 +348,16 @@ def main():
         args = [a for a in sys.argv[2:] if a != "--raw"]; raw = "--raw" in sys.argv
         decompile(args[0], int(args[1], 0), args[2], args[3] if len(args) > 3 else None, raw=raw)
     elif cmd == "emulate":
-        vm, cfg = make_vm(sys.argv[2])
-        print(f"[{sys.argv[2]}] emulator ready: ROM={cfg['rom']}  DISPATCHER_ADDR=${vm.DISPATCHER_ADDR:04X}")
-        print("(call helpers programmatically; see emulator_rotk.py for the sub-call convention)")
+        import argparse
+        ap = argparse.ArgumentParser(prog="titles emulate", description="run one bytecode sub on the ROM's own VM")
+        ap.add_argument("game")
+        ap.add_argument("sub", type=lambda x: int(x, 0), help="the sub's stub address (as its name labels it)")
+        ap.add_argument("args", nargs="*", type=lambda x: int(x, 0))
+        ap.add_argument("--bank", type=int, help="the sub's bank (required below $C000)")
+        ap.add_argument("--sram", help="an SRAM dump (.dmp) to load first")
+        a = ap.parse_args(sys.argv[2:])
+        r = run_sub(a.game, a.sub, a.args, bank=a.bank, sram=a.sram)
+        print(f"{a.game} ${a.sub:04X}({', '.join(map(str, a.args))}) -> {r} (${r:04X})")
     else:
         sys.exit(__doc__)
 
