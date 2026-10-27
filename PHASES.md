@@ -125,20 +125,22 @@ for exact extents and text, and drive its sound engine one trigger at a time (Ma
 
 ## 4. Structure (`structure`)
 
-**Gate:** Primitives probed against the live handler; VM round-trip byte-identical; one call graph with a leaves-first order.
+**Gate:** Primitives probed against the live handler; VM round-trip byte-identical; the rendered C equals the ROM by value on the title's fixtures; one call graph with a leaves-first order.
 
 | Track | Commands |
 |---|---|
 | both | Call graph and order: *library* `passes.callgraph` (`leaves_first`, `layers`, `bank_order`); VM: `py -3.14 -m emu_harness.vm.koei.nes.callgraph <title> --bank-order` |
 | vm | Round-trip: `py -3.14 -m emu_harness.vm.koei.nes.gates.roundtrip --game <title>`; stack effects: `...gates.stack_audit`; CFG: `...gates.cfg_gate` |
 | vm | Primitives against the live handler: `py -3.14 -m emu_harness.vm.koei.nes.titles emulate <title> <0xSUB> [args]` |
+| vm | Rendered C against the ROM: `py -3.14 -m emu_harness.vm.koei.nes.gates.value_probe --game <title>` (the printed C of small subs, evaluated, vs `titles.run_sub`; calls run the callee on the ROM, so argument order counts; add fixtures per title) |
 | native | Partition edges: *library* `passes.native.partition_edges`, `reachable` |
 
 **Lessons** (*Structure*): verify the primitive layer before building on it (one compare fix cleared
 996 sites; 323 inverted compares had passed every structural gate); ground the opcode table in three
 sources; transpile the weak language to C and reason in C; a gate that passed 37 non-compilable subs
 needed an emit-integrity check; unconsumed call results vanish from stack-VM C; install a gate the
-moment a ground truth and a cheap check exist.
+moment a ground truth and a cheap check exist; every structural gate can pass while the printed C is
+wrong (the compare names, the `$8B` sign, the textual inverter), so one gate must read the C itself.
 
 ## 5. Naming (`naming`)
 
