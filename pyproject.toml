@@ -12,8 +12,8 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest", "import-linter"]
-render = ["pillow"]
-audio = ["numpy"]           # machines.nes.apu synthesizes register streams to audio          # machines.nes.ppu and the KOEI asset layer draw with PIL
+render = ["pillow"]          # machines.nes.ppu and the KOEI asset layer draw with PIL
+audio = ["numpy"]            # machines.nes.apu synthesizes register streams to audio
 manual = ["pymupdf"]         # tools/manual_to_images: scanned manual PDFs -> page images
 
 # Editable installs only (`pip install -e`): the Mesen client reads config.toml from the repo root.
