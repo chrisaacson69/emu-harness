@@ -393,7 +393,7 @@ syscall_slots  = 33              # jsr3: 3-byte JMP entries at syscall_table
 [na2.native_floor]
 oracle         = "na1"
 syscall_slots  = 31
-extop_table    = 0xEE7A          # from na2's copy; [na2] itself has no extop_* keys
+extop_table    = 0xEE76          # the table na2's $B7 handler $EE5B indexes (LDA $EE76,X); was $EE7A from na2's copy, two entries off (NA1 revisit 2026-10-27)
 extop_slots    = 46
 
 [na1.native_floor]                # NA1 is the oracle, never a native_floor target; these seed its call graph

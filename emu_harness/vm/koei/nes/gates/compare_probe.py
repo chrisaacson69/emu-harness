@@ -12,12 +12,20 @@ candidate predicates give distinct truth vectors: 3<6 / 6>3 / 6==6 fix the direc
 (1,-1) split signed from unsigned. The measured predicate must match the decompiler's mnemonic and
 `_BINOP` entry and the table's mnemonic.
 
+The 32-bit compares are ext-ops (`$B7 nn`), and the C prints whatever the title's registry calls
+each handler, so a wrong direction in a name is the same bug one layer down. `check_ext` runs every
+ext-op handler whose registry name claims a comparison (cmp..eq/ne/lt/le/gt/ge, signed/unsigned)
+over 32-bit pairs that split direction, signedness and the high word, and compares. The result is
+regL's low 16 bits (the handlers write only $08/$09). Added in the NA1 revisit: all 11 of NA1's
+names held.
+
 Usage:
   py -3.14 -m emu_harness.vm.koei.nes.gates.compare_probe              # NA1
   py -3.14 -m emu_harness.vm.koei.nes.gates.compare_probe --game gk    # any title
   py -3.14 -m emu_harness.vm.koei.nes.gates.compare_probe --all        # every title in games.toml
 """
 import argparse
+import re
 import sys
 import tomllib
 from pathlib import Path
@@ -99,6 +107,92 @@ def check(game="na1", dec_map=None, binop=None):
     return rows
 
 
+M32 = 0xFFFFFFFF
+EXT_MATRIX = [(3, 6), (6, 3), (6, 6), (M32, 1), (1, M32), (0, 0), (0x10000, 0x10000), (0x10000, 1)]
+
+
+def _s32(v):
+    return v - (1 << 32) if v & 0x80000000 else v
+
+
+EXT_PREDS = {
+    'eq': lambda l, r: l == r,                'ne': lambda l, r: l != r,
+    'slt': lambda l, r: _s32(l) < _s32(r),    'sle': lambda l, r: _s32(l) <= _s32(r),
+    'sgt': lambda l, r: _s32(l) > _s32(r),    'sge': lambda l, r: _s32(l) >= _s32(r),
+    'ult': lambda l, r: l < r,                'ule': lambda l, r: l <= r,
+    'ugt': lambda l, r: l > r,                'uge': lambda l, r: l >= r,
+}
+EXT_VEC2PRED = {tuple(int(f(l, r)) for l, r in EXT_MATRIX): p for p, f in EXT_PREDS.items()}
+
+
+def claimed(name):
+    """The predicate a handler's name claims ('slt', 'eq', ...), or None if it claims none or is
+    ambiguous (an order compare that names no signedness, or b-before-a operand order)."""
+    if "cmp" not in name or "_b_" in name.split("cmp", 1)[1][:3]:
+        return None
+    m = re.search(r"(?:^|_)(eq|ne|lt|le|gt|ge)(?:_|$)", name)
+    if not m:
+        return None
+    rel = m.group(1)
+    if rel in ("eq", "ne"):
+        return rel
+    if "unsigned" in name:
+        return "u" + rel
+    return "s" + rel if "signed" in name else None
+
+
+def measure_ext(vm, idx, l, r):
+    for a in range(0x0400, 0x0540):
+        vm.mem.write(a, 0)
+    vm.mem.write(0x0400, 0xB7)
+    vm.mem.write(0x0401, idx)
+    for k in range(4):
+        vm.mem.write(0x08 + k, (l >> 8 * k) & 0xFF)
+        vm.mem.write(0x0C + k, (r >> 8 * k) & 0xFF)
+    vm.vm_fp, vm.vm_sp, vm.vm_pc, vm.vm_call_depth = FP, SP, 0x0400, 0
+    vm.cpu.pc = vm.DISPATCHER_ADDR
+    vm.step_one_vm_op(max_cpu_steps=20000)
+    return vm.mem.read(0x08) | vm.mem.read(0x09) << 8
+
+
+def extop_table(buf, cfg):
+    """The ext-op table as the cartridge indexes it: the first LDA abs,X in the $B7 handler. Read
+    from the code, not the profile (na2's profile was two entries off, 2026-10-27)."""
+    lo, hi = cfg["handler_lo"] - 0xC000, cfg["handler_hi"] - 0xC000
+    h = buf[lo + 0xB7] | buf[hi + 0xB7] << 8
+    for i in range(h - 0xC000, h - 0xC000 + 40):
+        if buf[i] == 0xBD:
+            return buf[i + 1] | buf[i + 2] << 8
+    return None
+
+
+def check_ext(game="na1", names=None):
+    """-> [(idx, addr, name, claimed, measured, ok)] for every ext-op handler whose name claims a
+    compare. `names` ({addr: name}) defaults to the title's registry."""
+    from emu_harness.core.symbols import names_by_address, read_registry
+    from emu_harness.machines.nes.memory import fixed_bank
+    from emu_harness.vm.koei.nes import titles
+    vm, cfg = titles.make_vm(game)
+    names = names_by_address(read_registry(cfg["_labels"])) if names is None else names
+    buf = fixed_bank(Path(cfg["_rom"]).read_bytes())
+    word = lambda a: buf[a - 0xC000] | buf[a - 0xC000 + 1] << 8
+    table = extop_table(buf, cfg)
+    if table is None:
+        return []
+    rows = []
+    for idx in range(1, 48):
+        addr = word(table + 2 * idx)
+        want = claimed(names.get(addr, ""))
+        if want is None or not 0xC000 <= addr <= 0xFFFF:
+            continue
+        try:
+            got = EXT_VEC2PRED.get(tuple(int(measure_ext(vm, idx, l, r) != 0) for l, r in EXT_MATRIX))
+        except Exception as ex:                     # the handler itself failed: report, never pass
+            got = f"exec error: {type(ex).__name__}"
+        rows.append((idx, addr, names[addr], want, got, got == want))
+    return rows
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Compare-opcode direction/signedness vs the live handler")
     g = ap.add_mutually_exclusive_group()
@@ -117,6 +211,13 @@ def main(argv=None):
         for op, pred, ok, detail in rows:
             if a.verbose or not ok:
                 print(f"  ${op:02X}: {'OK ' if ok else 'BAD'} measured={pred}  {detail}")
+        ext = check_ext(game)
+        ebad = sum(not r[-1] for r in ext)
+        bad += ebad
+        print(f"{game}: {len(ext) - ebad}/{len(ext)} ext-op compare names match the live handler")
+        for idx, addr, name, want, got, ok in ext:
+            if a.verbose or not ok:
+                print(f"  ext ${idx:02X} ${addr:04X} {'OK ' if ok else 'BAD'} {name}: name says {want}, measured {got}")
     print("PASS" if not bad else f"FAIL: {bad} compare(s) disagree with the handler")
     return 1 if bad else 0
 

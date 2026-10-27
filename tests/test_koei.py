@@ -214,3 +214,21 @@ def test_compare_probe_measures_direction_and_fails_on_a_swap():
     swapped[0xC3], swapped[0xC5] = swapped[0xC5], swapped[0xC3]
     bad = [op for op, _, ok, _ in compare_probe.check("na1", dec_map=swapped) if not ok]
     assert bad == [0xC3, 0xC5]
+
+
+def test_ext_compare_names_measured_and_a_swapped_name_fails():
+    """The 32-bit half of the compare gate: NA1's 10 cmp32 names hold on the live handlers, and a
+    gt handler carrying the lt name (how na2 / bk / GemFire inherited them) is caught."""
+    import pytest
+    from emu_harness.core.symbols import names_by_address, read_registry
+    from emu_harness.vm.koei.nes.titles import game_cfg
+    from emu_harness.vm.koei.nes.gates import compare_probe
+    cfg = game_cfg("na1")
+    if not cfg["_rom"].exists():
+        pytest.skip("na1-decompiler ROM not present")
+    rows = compare_probe.check_ext("na1")
+    assert len(rows) == 10 and all(r[-1] for r in rows)
+    names = names_by_address(read_registry(cfg["_labels"]))
+    names[0xF47E] = "cmp32_a_lt_b_signed_f47e"          # the gt handler, given lt's name
+    bad = [r for r in compare_probe.check_ext("na1", names=names) if not r[-1]]
+    assert [(r[0], r[4]) for r in bad] == [(0x0A, "sgt")]
