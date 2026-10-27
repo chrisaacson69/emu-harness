@@ -269,3 +269,39 @@ def test_byte_immediate_keeps_its_sign(tmp_path):
     line = next(ln for ln in c.read_text(encoding="utf-8").splitlines() if ln.rstrip().endswith("// $B5BD"))
     import re   # structured `!= -1` or goto form `== -1) goto` (the mode is a module global)
     assert re.search(r"[!=]= -1\)", line) and not re.search(r"[!=]= 1\)", line), line
+
+
+def _eval_c(cond, env):
+    """Evaluate a decompiled C condition over small ints (casts dropped; enough for the inverter)."""
+    py = re.sub(r"\(unsigned\)", "", cond).replace("&&", " and ").replace("||", " or ")
+    py = re.sub(r"!(?!=)", " not ", py)
+    return bool(eval(py, {}, dict(env)))
+
+
+def test_invert_condition_negates_at_the_top_level():
+    """invert_condition must be the logical negation. The textual version split at the first
+    comparison anywhere, so NA1's `!((A > 10) || (B > 4))` (is_cell_clear_of_bits $82E9, and
+    $89FD, $930A) inverted to `!((A <= 10) || (B > 4))`, i.e. A && !B; the ROM returns 1 for
+    (0, 5). Each case is checked by value, and the textual inverter is planted and must fail."""
+    import itertools
+    from emu_harness.vm.koei.nes.vm_decompile import invert_condition
+
+    def textual(cond):   # the pre-fix inverter, kept as the planted fault
+        cond = cond.strip()
+        if cond.startswith('(') and cond.endswith(')'):
+            cond = cond[1:-1]
+        for op, inv in (('<', '>='), ('>', '<='), ('<=', '>'), ('>=', '<'), ('==', '!='), ('!=', '==')):
+            m = re.match(rf'^(.+?)\s+{re.escape(op)}\s+(.+?)$', cond)
+            if m:
+                return f"({m.group(1)} {inv} {m.group(2)})"
+        return f"!({cond})"
+
+    cases = ["!((((unsigned)a > (unsigned)10) || ((unsigned)b > (unsigned)4)))",
+             "!((a || (b <= 0)))", "(a == 1) && (b == 2)", "((a + b) == c)", "a < b",
+             "!((a == b))", "(a & b) == c", "a == b & c", "!(a) && !(b)", "((a - b) > 5)"]
+    grid = [dict(zip("abc", v)) for v in itertools.product((0, 1, 2, 5, 11), repeat=3)]
+    for cond in cases:
+        inv = invert_condition(cond)
+        assert all(_eval_c(inv, e) != _eval_c(cond, e) for e in grid), (cond, inv)
+    assert invert_condition("!((a == b))") == "(a == b)"
+    assert any(_eval_c(textual(c), e) == _eval_c(c, e) for c in cases for e in grid)

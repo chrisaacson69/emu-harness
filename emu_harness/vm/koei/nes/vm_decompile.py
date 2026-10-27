@@ -1760,23 +1760,56 @@ SIMPLIFY_RULES = [
 ]
 
 
+_CMP_INVERSE = {'<': '>=', '>': '<=', '<=': '>', '>=': '<', '==': '!=', '!=': '=='}
+# Binary operators that bind tighter than a comparison: a lone top-level comparison among
+# these is the condition's root, so flipping it negates the whole condition.
+_TIGHTER_THAN_CMP = {'+', '-', '*', '/', '%', '<<', '>>'}
+
+
+def _is_wrapped(s):
+    """True when `s` is one paren group: the '(' at 0 closes at the last char.
+    `(a == 1) && (b == 2)` starts and ends with a paren but is not wrapped."""
+    if not (s.startswith('(') and s.endswith(')')):
+        return False
+    depth = 0
+    for i, c in enumerate(s):
+        depth += (c == '(') - (c == ')')
+        if depth == 0 and i < len(s) - 1:
+            return False
+    return True
+
+
+def _top_level_ops(s):
+    """[(start, op)] for the space-bounded binary operators at paren depth 0. The engine
+    prints a binary operator between spaces and a unary one without (`a & b`, `&arg2`)."""
+    ops, depth = [], 0
+    for i, c in enumerate(s):
+        depth += (c == '(') - (c == ')')
+        if depth == 0 and c == ' ':
+            m = re.match(r' ([-+*/%<>=!&|^?:]+) ', s[i:])
+            if m:
+                ops.append((i + 1, m.group(1)))
+    return ops
+
+
 def invert_condition(cond):
-    """Negate a condition expression for early-return rewrite."""
+    """Negate a condition expression for early-return rewrite. Parses the top level: a
+    wrapped `!(X)` inverts to X, a lone top-level comparison is flipped, anything else
+    (`&&`, `||`, `?:`, `&`, a comparison inside a call) becomes `!(...)`. The textual
+    version split at the first comparison anywhere, so `!(A || B)` came out `!(~A || B)`."""
     cond = cond.strip()
-    # If wrapped in outer parens, strip
-    if cond.startswith('(') and cond.endswith(')'):
-        cond = cond[1:-1]
-    invs = [
-        ('<', '>='), ('>', '<='), ('<=', '>'), ('>=', '<'),
-        ('==', '!='), ('!=', '=='),
-    ]
-    for op, inv in invs:
-        # Match strict op (space-bounded)
-        pat = re.compile(rf'^(.+?)\s+{re.escape(op)}\s+(.+?)$')
-        m = pat.match(cond)
-        if m:
-            return f"({m.group(1)} {inv} {m.group(2)})"
-    # Fallback: !cond
+    while _is_wrapped(cond):
+        cond = cond[1:-1].strip()
+    if cond.startswith('!') and _is_wrapped(cond[1:]):
+        inner = cond[1:]
+        while _is_wrapped(inner):
+            inner = inner[1:-1].strip()
+        return f"({inner})"
+    ops = _top_level_ops(cond)
+    cmps = [(i, op) for i, op in ops if op in _CMP_INVERSE]
+    if len(cmps) == 1 and all(op in _TIGHTER_THAN_CMP for _, op in ops if op not in _CMP_INVERSE):
+        i, op = cmps[0]
+        return f"({cond[:i].rstrip()} {_CMP_INVERSE[op]} {cond[i + len(op):].lstrip()})"
     return f"!({cond})"
 
 
@@ -1806,10 +1839,7 @@ def _parse_branch_line(text):
 def _negate_cond(cond):
     """Loop-continue condition = negation of a 'taken -> exit' test. Unwrap an
     explicit `!(X)` to X; otherwise flip the comparison (or fall back to !(...))."""
-    c = cond.strip()
-    if c.startswith('!(') and c.endswith(')'):
-        return c[2:-1]
-    return invert_condition(c)
+    return invert_condition(cond)
 
 
 def _is_pure_exit_block(b, cfg, loop):
