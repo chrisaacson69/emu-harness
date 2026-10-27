@@ -18,7 +18,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="emu_harness", description="The RE build tool (PHASES.md).")
     verbs = ap.add_subparsers(dest="verb", required=True)
     st = verbs.add_parser("status", help="where a project stands and which phase the next session starts at")
-    st.add_argument("project", help="project folder: a path, or a name next to emu-harness (e.g. game-annotation/mappy)")
+    st.add_argument("project", help="project folder: a path, or a name next to emu-harness (e.g. mappy-decompiler)")
     st.add_argument("--json", action="store_true", help="records, not prose")
     st.set_defaults(fn=_status)
     args = ap.parse_args(argv)

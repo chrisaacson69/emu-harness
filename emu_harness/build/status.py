@@ -3,7 +3,7 @@
     py -3.14 -m emu_harness status <project> [--json]
 
 `<project>` is a folder: a path, or a name next to emu-harness (the sibling convention, as
-games.toml's `repo`), e.g. `game-annotation/mappy`. The project keeps its own state in
+games.toml's `repo`), e.g. `mappy-decompiler`. The project keeps its own state in
 `<project>/re-roadmap.toml` (template: roadmap.template.toml beside this file); emu-harness keeps
 only the phases (phase_table.toml) and their manual (PHASES.md).
 
@@ -43,7 +43,7 @@ def phase_paths(phase, track):
 def resolve_project(arg, siblings=None):
     """A folder given as a path (absolute, or relative to the cwd), else a sibling of emu-harness,
     else a project folder one level inside a sibling that holds a roadmap (the early breakdowns live
-    in a monorepo: `mappy` is game-annotation/mappy). Two such matches are refused, not guessed."""
+    in a monorepo, as Mappy was in game-annotation until 2026-10-27). Two such matches are refused, not guessed."""
     siblings = SIBLINGS if siblings is None else Path(siblings)
     p = Path(arg)
     for cand in (p, siblings / p):

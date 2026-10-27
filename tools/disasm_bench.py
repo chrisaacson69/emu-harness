@@ -151,7 +151,7 @@ def run_scores():
         ("descent, cold (vectors)", score(cold, truth, cdl)),
         ("descent, cold + nes-disasm6", score(fill(cold, nd6), truth, cdl))])
 
-    M = ROOT / "game-annotation" / "mappy"
+    M = ROOT / "mappy-decompiler"
     p = M / "Mappy (Japan).nes"; rom = p.read_bytes(); prg = prg_of(rom); cdl = list((SCRATCH / "mappy.cdl").read_bytes())
     nd6, cold = nes_disasm6.verdicts(p, tool), cold_descent(prg, 0, 0xC000, 0x4000, mirrors=(0x8000,))
     rows = [("linear sweep (ours)", score(linear(rom), cdl=cdl)),

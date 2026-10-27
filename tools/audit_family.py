@@ -22,7 +22,7 @@ LIBS = ["emu-harness", "koei-nes", "koei-snes", "snes-decompiler", "game-annotat
 TITLES = ["na1-decompiler", "ro3k-decompiler", "gk-decompiler", "na2-decompiler",
           "rot3k2-decompiler", "bk-decompiler", "GemFire-decompiler", "LEmp-decompiler",
           "Elite-decompiler", "UW-decompile", "rot3k2-snes-decompiler",
-          "Gemfire-snes-decompiler", "AeroBiz-decompiler", "na1-snes-decompiler"]
+          "Gemfire-snes-decompiler", "AeroBiz-decompiler", "na1-snes-decompiler", "mappy-decompiler"]
 SKIP = {".git", "__pycache__", "_scratch", "node_modules", ".venv", "venv"}
 MIN_NODES = 40  # a function body smaller than this is too small to call a copy
 
