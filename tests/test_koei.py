@@ -253,3 +253,19 @@ def test_ext_op_overrides_match_the_rom_and_a_wrong_model_fails():
         assert cfg_gate.override_value_check(0xD6B8, small)
     finally:
         VC._EXTOP_OVERRIDE[0xD6B8] = (c_lines, _model, bank)
+
+
+def test_byte_immediate_keeps_its_sign(tmp_path):
+    """$8B BYTE_LOADR_imm1 sign-extends (the live handler: FF -> $FFFF). The decompiler dropped the
+    sign, so NA1's arms purchase ($B4D5, the $B5BD test of scale_div10_capcheck's -1 sentinel)
+    printed `!= 1`. Disassemble and decompile bank 1 from the ROM and require `!= -1`."""
+    import pytest
+    from emu_harness.vm.koei.nes import titles
+    if not titles.game_cfg("na1")["_rom"].exists():
+        pytest.skip("na1-decompiler ROM not present")
+    asm, c = tmp_path / "b1.asm", tmp_path / "b1.c"
+    titles.disasm("na1", 1, str(asm))
+    titles.decompile("na1", 1, str(asm), str(c))
+    line = next(ln for ln in c.read_text(encoding="utf-8").splitlines() if ln.rstrip().endswith("// $B5BD"))
+    import re   # structured `!= -1` or goto form `== -1) goto` (the mode is a module global)
+    assert re.search(r"[!=]= -1\)", line) and not re.search(r"[!=]= 1\)", line), line

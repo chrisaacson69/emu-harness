@@ -107,6 +107,13 @@ _EXTOP_OVERRIDES_NA1 = _EXTOP_OVERRIDE = {
              lambda a, b: 0 if a == 0 and b == 0 else _sdiv32(100 * a, a + b) & 0xFFFF, 15),
 }
 
+def na1_extop_model(stub):
+    """The ROM-checked Python model of one of NA1's five ext-op helpers (by stub address), for
+    callers that compute with them (na1sim) instead of copying a formula. Takes and returns 16-bit
+    words, as the ROM does."""
+    return _EXTOP_OVERRIDES_NA1[stub][1]
+
+
 def _apply_arg_enums(fname, args):
     """Replace literal-int args of enum-typed functions with named constants."""
     emap = _ARG_ENUMS.get(fname)
@@ -1335,8 +1342,9 @@ def decompile(filepath, sub_addr, labels=None, var_names=None, collect=None):
             m = re.search(r'\+?(\d+)', operand)
             state.regA = str(int(m.group(1)) if m else 0)
         elif mnem == 'loadB_imm_byte':
-            m = re.search(r'\+?(\d+)', operand)
-            state.regB = str(int(m.group(1)) if m else 0)
+            # $8B BYTE_LOADR_imm1 sign-extends its byte (live handlers, na1 / gk / uw: FF -> $FFFF).
+            # This parse dropped the sign, printing `x != 1` for the bytecode's `x != -1` (NA1 revisit).
+            state.regB = str(_op_int(operand))
         elif mnem == 'setB_imm4':
             state.regB = str(opcode & 0x0F)
         elif mnem == 'addA_imm4':
