@@ -61,14 +61,14 @@ static↔runtime join means data-first; a bespoke VM gets our own decompiler.
 | both | Vectors and windows: *library* `machines.nes.memory.Windows`, `window_votes` (words that land on a bank's own entries); vm: `py -3.14 -m emu_harness.vm.koei.nes.window_check <title> [-v]` checks a profile against the banks' code |
 | both | Strings: *library* `passes.strings`; VM: `py -3.14 -m emu_harness.vm.koei.nes.strings <title> dump <bank>` |
 | vm | Seed the profile from the closest sibling, then disassemble: `py -3.14 -m emu_harness.vm.koei.nes.titles disasm <title> <bank>`; SNES: `vm.koei.snes.vm_walk` |
-| vm | ISA probes: `py -3.14 tools/koei_isa_probe.py`, `tools/koei_isa_census.py` |
+| vm | ISA probes: `py -3.14 tools/koei_isa_probe.py`, `tools/koei_isa_census.py`; compare direction and signedness on the live handler: `py -3.14 -m emu_harness.vm.koei.nes.gates.compare_probe --game <title>` (`--all`) |
 
 **Lessons** (*Recon*): "0 errors" is vacuous unless the walker can fail (ownership conflicts, dead
 opcodes, a raising bind); re-derive the shared toolchain's assumptions from executing handlers on each
 new title and fix the toolchain first (AeroBiz found `$D8` mis-decoded in two shipped titles); derive
 operand sizes from the fetch helpers, never a hand list; read module manifests from the ROM's own
 archive; verify each bank's window (six profiles had the sound bank wrong); census the fixed bank for a
-second VM-entry stub (`$E2E3` is an ABI, not a dialect); recon corrections can be wrong too.
+second VM-entry stub (`$E2E3` is an ABI, not a dialect); recon corrections can be wrong too; a structural gate cannot see a compare's direction (round-trip and CFG both stay green while the C inverts every threshold), so probe it on the handler (NA1: 323 sites, 2026-06-04; the probe was atticked in a refactor and came back as `gates.compare_probe` in the NA1 revisit).
 
 ## 2. Code discovery (`discover`)
 

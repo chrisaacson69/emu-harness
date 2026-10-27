@@ -197,3 +197,20 @@ def test_na1_animation_matches_mesen():
     for oam, pal, _chr in frames:
         assert pal[0x10:] == bytes.fromhex("3e1638303e1222303e2722383e162930")
         assert all(oam[i * 4] >= 0xEF or oam[i * 4: i * 4 + 4] != b"\0\0\0\0" for i in range(64))
+
+
+def test_compare_probe_measures_direction_and_fails_on_a_swap():
+    """The compare gate (converted from na1's atticked probe, 2026-10-27): the decompiler's map
+    agrees with NA1's live handlers, and the June 2026 bug (C3/C5 le<->ge swapped) is caught."""
+    import pytest
+    from emu_harness.vm.koei.nes.titles import game_cfg
+    from emu_harness.vm.koei.nes import vm_decompile
+    from emu_harness.vm.koei.nes.gates import compare_probe
+    if not game_cfg("na1")["_rom"].exists():
+        pytest.skip("na1-decompiler ROM not present")
+    rows = compare_probe.check("na1")
+    assert [p for _, p, ok, _ in rows] == list(compare_probe.PREDS) and all(ok for *_, ok, _ in rows)
+    swapped = dict(vm_decompile.OPCODE_TO_MNEMONIC)
+    swapped[0xC3], swapped[0xC5] = swapped[0xC5], swapped[0xC3]
+    bad = [op for op, _, ok, _ in compare_probe.check("na1", dec_map=swapped) if not ok]
+    assert bad == [0xC3, 0xC5]

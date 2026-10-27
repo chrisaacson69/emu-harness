@@ -22,7 +22,7 @@ key  = "recon"
 name = "Recon"
 gate = "Bank windows come from evidence; VM: every bytecode bank tiles with 0 errors from a walker that can fail, and the shared toolchain's load-bearing assumptions were re-derived on this title."
 paths.common = ["emu_harness/machines/nes/memory.py", "emu_harness/machines/snes/mapper.py", "emu_harness/passes/strings.py"]
-paths.vm     = ["emu_harness/vm/koei/isa.py", "emu_harness/vm/koei/nes/games.toml", "emu_harness/vm/koei/nes/vm_disasm.py", "emu_harness/vm/koei/nes/titles.py", "emu_harness/vm/koei/snes/games.toml", "emu_harness/vm/koei/snes/vm_walk.py"]
+paths.vm     = ["emu_harness/vm/koei/isa.py", "emu_harness/vm/koei/nes/games.toml", "emu_harness/vm/koei/nes/vm-opcodes-v2.toml", "emu_harness/vm/koei/nes/vm_disasm.py", "emu_harness/vm/koei/nes/titles.py", "emu_harness/vm/koei/nes/gates/roundtrip.py", "emu_harness/vm/koei/nes/gates/compare_probe.py", "emu_harness/vm/koei/snes/games.toml", "emu_harness/vm/koei/snes/vm_walk.py"]
 paths.native = []
 
 [[phase]]

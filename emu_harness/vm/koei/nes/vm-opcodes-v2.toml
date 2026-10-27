@@ -256,7 +256,7 @@ mnemonic = "BYTE_LOADR_abs"
 mnemonic = "STORE_abs"
 pops = 0
 pushes = 0
-description = "word at absolute address = regL  (THIS IS THE KEY ONE — old disasm called it loadA_mem_word, which was WRONG)"
+description = "word at absolute address = regL  (a **store**, not a load — distinct from `$A4 LOADL_abs`)"
 verified = true
 
 [op_A9]
