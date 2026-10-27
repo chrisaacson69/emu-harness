@@ -297,18 +297,23 @@ def frames_to_cycles(stream):
     return out
 
 
-def write_wav(samples, path, gain=0.9):
-    """Float samples (the mixer's 0..~1 scale) -> 16-bit mono WAV, DC removed by a ~37 Hz high-pass."""
+def write_wav(samples, path, gain=0.9, peak=None):
+    """Float samples (the mixer's 0..~1 scale) -> 16-bit mono WAV, DC removed by a ~37 Hz high-pass that
+    starts at the first sample's level (an idle triangle's DC is not a click). peak: scale so the
+    largest sample is that fraction of full scale (returns the gain used)."""
     a = np.exp(-2 * np.pi * 37 / RATE)
     y = np.empty_like(samples)
-    prev_x = prev_y = 0.0
+    prev_x, prev_y = (samples[0] if len(samples) else 0.0), 0.0
     for n, x in enumerate(samples):                   # first-order high-pass
         prev_y = a * (prev_y + x - prev_x)
         prev_x = x
         y[n] = prev_y
+    if peak is not None and np.abs(y).max() > 0:
+        gain = peak / np.abs(y).max()
     pcm = np.clip(y * gain * 32767, -32768, 32767).astype("<i2")
     with wave.open(str(Path(path)), "wb") as w:
         w.setnchannels(1)
         w.setsampwidth(2)
         w.setframerate(RATE)
         w.writeframes(pcm.tobytes())
+    return gain
