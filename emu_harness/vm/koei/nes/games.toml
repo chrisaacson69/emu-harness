@@ -492,7 +492,7 @@ type   = "province"
 base   = 0x7001
 stride = 26
 province_var = "current_province_ptr"
-province = { 0 = "gold", 2 = "debt", 4 = "town", 6 = "rice", 8 = "output", 10 = "dams", 12 = "loyalty", 14 = "wealth", 16 = "men", 18 = "morale", 20 = "skill", 22 = "arms", 24 = "header" }
+province = { 0 = "gold", 2 = "debt", 4 = "town", 6 = "rice", 8 = "output", 10 = "dams", 12 = "loyalty", 14 = "wealth", 16 = "men", 18 = "morale", 20 = "skill", 22 = "arms", 24 = "stat_cap" }
 arg = "province"
 
 # Other record tables as arrays of structs: base / stride / field width / fields, and the routines that
