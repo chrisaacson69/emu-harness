@@ -407,5 +407,7 @@ def test_record_pointer_calls_render_as_arrow_fields():
     assert A("x = *(byte*)((dr(f(k)) + 4));") == "x = dr(f(k))->charisma;"
     assert A("x = *(byte*)(dr(k));") == "x = dr(k)->age;"
     assert A("p = (dr(k) + 2);") == "p = &dr(k)->drive;"
-    for keep in ("p = dr(k);", "x = *(byte*)((dr(k) + 3));", "x = *(word*)((dr(k) + 4));"):
+    for keep in ("p = dr(k);", "x = *(byte*)((dr(k) + 3));"):
         assert A(keep) == keep, keep
+    # a read of another width keeps its cast over the field's address, as the province rule does
+    assert A("x = *(word*)((dr(k) + 4));") == "x = *(word*)(&dr(k)->charisma);"
