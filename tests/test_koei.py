@@ -266,9 +266,11 @@ def test_byte_immediate_keeps_its_sign(tmp_path):
     asm, c = tmp_path / "b1.asm", tmp_path / "b1.c"
     titles.disasm("na1", 1, str(asm))
     titles.decompile("na1", 1, str(asm), str(c))
-    line = next(ln for ln in c.read_text(encoding="utf-8").splitlines() if ln.rstrip().endswith("// $B5BD"))
-    import re   # structured `!= -1` or goto form `== -1) goto` (the mode is a module global)
-    assert re.search(r"[!=]= -1\)", line) and not re.search(r"[!=]= 1\)", line), line
+    text = c.read_text(encoding="utf-8")
+    sub = text[text.index("sub $B4D5\n"):]
+    sub = sub[:sub.index("\n}\n")]
+    import re   # the $B5BD compare: its own line (goto form) or folded into a compound condition (DREAM)
+    assert re.search(r"local8 [!=]= -1\)", sub) and not re.search(r"local8 [!=]= 1\)", sub), sub
 
 
 def _eval_c(cond, env):
@@ -470,9 +472,10 @@ def test_rotated_loop_sets_its_variable_before_the_first_test(tmp_path):
     assert "phi_val" not in avg
     assert avg.index("fief = 0;") < avg.index("while ("), avg
     roll = body(0x85FC)                                        # prompt_roll_stat_value
-    # the roll IS the loop header ($8612): it must stay under its label (reached by the entry goto),
-    # not be lifted below a `while (` at the body bottom
-    assert roll.index("L_8612:") < roll.index("rng_mod(50)"), roll
+    # the roll IS the loop header ($8612): it must open the loop (under its label, or as the first work
+    # of a `while (1) {  // $8612`), not be lifted below a `while (` at the body bottom
+    head = roll.index("L_8612:") if "L_8612:" in roll else roll.index("{    // $8612")
+    assert head < roll.index("rng_mod(50)") < roll.index("poll_input()", head), roll
 
 
 def test_a_stored_call_is_read_back_by_name_not_called_again(tmp_path):

@@ -252,7 +252,13 @@ def decompiler_for(name, bank, raw=False):
     if raw:
         VC.STRUCTURE = False; VC.STRUCTURE_V2 = False; VC.STRUCTURE_DREAM = False
     else:
-        VC.STRUCTURE = True      # the flags are module state: a raw run earlier in the process left it off
+        # The canonical structurer, as cli/decompile_all runs it: DREAM primary, V2 fallback (each sub
+        # self-gated). The flags are module state, so set them every call (a raw run earlier in the
+        # process left them off). Until 2026-10-28 this path left DREAM unset and printed the retired
+        # V1 templates, while the generated banner said DREAM.
+        from emu_harness.vm.koei.nes import dream
+        VC.STRUCTURE = True; VC.STRUCTURE_V2 = False; VC.STRUCTURE_DREAM = True
+        VC.structure_dream = dream.dream_structure_gated
 
     labs = bank_scoped_labels(cfg, bank)              # addr -> (name, comment)
     sysmap = build_syscall_names(cfg, labs)           # game-aware syscall id->name (TOML-driven)
