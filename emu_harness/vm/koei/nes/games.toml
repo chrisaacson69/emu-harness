@@ -495,6 +495,15 @@ province_var = "current_province_ptr"
 province = { 0 = "gold", 2 = "debt", 4 = "town", 6 = "rice", 8 = "output", 10 = "dams", 12 = "loyalty", 14 = "wealth", 16 = "men", 18 = "morale", 20 = "skill", 22 = "arms", 24 = "header" }
 arg = "province"
 
+# Other record tables as arrays of structs: base / stride / field width / fields, and the routines that
+# return a pointer to one record (their `F(x) + N` reads render as F(x)->field).
+[na1.structs.daimyo]
+base   = 0x752F
+stride = 7
+width  = "byte"
+fields = { 0 = "age", 1 = "health", 2 = "drive", 3 = "luck", 4 = "charisma", 5 = "iq", 6 = "status" }
+returned_by = ["daimyo_record_addr", "fief_to_daimyo_record_addr", "selected_province_daimyo_record"]
+
 # ROTK province/state record (draw-verified vs the status screen + manual Country Data; word fields only --
 # the byte fields land_value@4/flood_control@5/loyalty@8/horses@9/flags@11 are in RECORD_SCHEMAS.md).
 # argN is mixed (officer OR province) so arg = {} (no false labels); the province global carries the names.

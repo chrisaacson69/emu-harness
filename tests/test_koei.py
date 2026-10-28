@@ -356,7 +356,8 @@ def test_record_access_renders_c_struct_arrays_and_only_that_shape():
     stride). Only `(E * stride) + base..base+stride-1` matches: a number is never renamed, an offset with
     no field name is left alone, and a local is a record pointer only if it is assigned once."""
     from emu_harness.vm.koei.nes import vm_decompile as VC
-    rec = {"type": "province", "base": 0x7001, "stride": 26, "fields": {0: "gold", 8: "output", 16: "men", 18: "morale"}}
+    rec = {"type": "province", "base": 0x7001, "stride": 26, "fields": {0: "gold", 8: "output", 16: "men", 18: "morale"},
+           "width": "word", "returned_by": []}
     labs = {0x7001: ("province_table_live", "")}
     A = lambda t: VC.annotate_record_access(t, labs, rec)
     assert A("x = *(word*)(((i * 26) + 0x7013));") == "x = province_table_live[i].morale;"
@@ -394,3 +395,17 @@ def test_ram_arrays_render_by_name_with_matching_declarations():
     mixed, decl2 = VC.render_ram_arrays("x = ((d * 9) + 0x77A8);\ny = ((d * 9) + 0x77A8);\nz = (k + 0x77A8);\n", labs)
     assert mixed.splitlines() == ["x = daimyo_name_table[d];", "y = daimyo_name_table[d];", "z = (k + 0x77A8);"]
     assert decl2.strip() == "extern byte daimyo_name_table[][9];"
+
+
+def test_record_pointer_calls_render_as_arrow_fields():
+    """A routine that returns a record pointer ([<title>.structs] returned_by): F(x) + N reads as
+    F(x)->field at the record's width; a bare call stays the pointer; an unnamed offset is left."""
+    from emu_harness.vm.koei.nes import vm_decompile as VC
+    rec = {"type": "daimyo", "base": 0x752F, "stride": 7, "width": "byte", "returned_by": ["dr"],
+           "fields": {0: "age", 2: "drive", 4: "charisma"}}
+    A = lambda t: VC.annotate_record_access(t, {}, rec)
+    assert A("x = *(byte*)((dr(f(k)) + 4));") == "x = dr(f(k))->charisma;"
+    assert A("x = *(byte*)(dr(k));") == "x = dr(k)->age;"
+    assert A("p = (dr(k) + 2);") == "p = &dr(k)->drive;"
+    for keep in ("p = dr(k);", "x = *(byte*)((dr(k) + 3));", "x = *(word*)((dr(k) + 4));"):
+        assert A(keep) == keep, keep

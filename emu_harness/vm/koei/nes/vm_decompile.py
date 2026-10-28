@@ -369,9 +369,9 @@ PROV_FIELDS = CPP_FIELDS                  # back-compat alias (NA1's province ma
 
 def set_schema(game):
     """Select the per-title record field maps and asset enums (called by koei_vm.decompile)."""
-    global CPP_VAR, CPP_FIELDS, ARG_FIELDS, _ARG_ENUMS, _ENUMS, _EXTOP_OVERRIDE, _RECORD
+    global CPP_VAR, CPP_FIELDS, ARG_FIELDS, _ARG_ENUMS, _ENUMS, _EXTOP_OVERRIDE, _RECORDS
     CPP_VAR, CPP_FIELDS, ARG_FIELDS = _fields_of(game) or _DEFAULT_SCHEMA
-    _RECORD = _record_of(game)
+    _RECORDS = _records_of(game)
     _ARG_ENUMS, _ENUMS = _load_asset_enums(game)
     _EXTOP_OVERRIDE = _EXTOP_OVERRIDES_NA1 if game == "na1" else {}
 
@@ -433,23 +433,32 @@ def annotate_array_access(text, labels):
     return _ARRAY_ACCESS_NAMED_RE.sub(rep_named, text)
 
 
-# Strided record tables as C arrays of structs (the title profile's [fields] type / base / stride).
-# The engine prints a record access as `((E * stride) + 0xADDR)`, the field folded into ADDR; this
-# renders it as &table[E].field, a word read of it as table[E].field, and the bare base as &table[E].
-# A local whose one assignment in the sub is &table[E] then reads as local->field. Only the
-# `(E * stride) + base..base+stride-1` shape matches, so a number such as 0x7530 is never touched,
-# and an offset with no field name (a byte field) is left as it was.
-def _record_of(game):
+# Strided record tables as C arrays of structs (the title profile: [<title>.fields] type / base / stride
+# for the province table, [<title>.structs.<type>] for the others, each with a field width and
+# optionally the routines that return a pointer to one record). The engine prints a record access as
+# `((E * stride) + 0xADDR)`, the field folded into ADDR; this renders it as &table[E].field, a read of
+# the field's width as table[E].field, and the bare base as &table[E]. A local whose one assignment in
+# the sub is &table[E], and a call to a routine that returns a record pointer, then read as ->field.
+# Only the `(E * stride) + base..base+stride-1` shape matches, so a number such as 0x7530 is never
+# touched, and an offset with no field name is left as it was.
+_DEREF = {"word": "*(word*)(", "byte": "*(byte*)("}
+
+
+def _records_of(game):
     from emu_harness.vm.koei.nes.titles import load_games
-    f = load_games().get(game, {}).get("fields") or {}
-    if "base" not in f:
-        return None
-    return {"type": f["type"], "base": f["base"], "stride": f["stride"],
-            "fields": {int(k): v for k, v in f.get("province", {}).items()}}
+    g = load_games().get(game, {})
+    out = []
+    f = g.get("fields") or {}
+    if "base" in f:
+        out.append({"type": f["type"], "base": f["base"], "stride": f["stride"], "width": "word",
+                    "fields": {int(k): v for k, v in f.get("province", {}).items()}, "returned_by": []})
+    for t, r in (g.get("structs") or {}).items():
+        out.append({"type": t, "base": r["base"], "stride": r["stride"], "width": r.get("width", "word"),
+                    "fields": {int(k): v for k, v in r["fields"].items()}, "returned_by": r.get("returned_by", [])})
+    return out
 
 
-_RECORD = _record_of("na1")
-_WORD_DEREF = "*(word*)("
+_RECORDS = _records_of("na1")
 
 
 def _match_open(text, close):
@@ -465,13 +474,23 @@ def _match_open(text, close):
     return -1
 
 
-def annotate_record_access(text, labels, rec=None):
-    rec = rec or _RECORD
-    if not rec:
-        return text
-    base, stride, fields = rec["base"], rec["stride"], rec["fields"]
-    table = _label_name(labels, base) if labels else None
-    table = table or f"{rec['type']}_table"
+def _match_close(text, open_):
+    """Index of the ')' that closes the '(' at `open_`, or -1."""
+    depth = 0
+    for i in range(open_, len(text)):
+        depth += (text[i] == "(") - (text[i] == ")")
+        if depth == 0:
+            return i
+    return -1
+
+
+def _table_name(labels, rec):
+    return (_label_name(labels, rec["base"]) if labels else None) or f"{rec['type']}_table"
+
+
+def _annotate_one_record(text, labels, rec):
+    base, stride, fields, deref = rec["base"], rec["stride"], rec["fields"], _DEREF[rec["width"]]
+    table = _table_name(labels, rec)
     pat = re.compile(rf" \* {stride}\) \+ 0x([0-9A-Fa-f]{{4}})\)")
     pos = 0
     while True:
@@ -490,33 +509,77 @@ def annotate_record_access(text, labels, rec=None):
             pos = m.end(); continue
         elem = f"{table}[{idx}]"
         new = f"&{elem}.{fields[off]}" if off else f"&{elem}"
-        lead = start - len(_WORD_DEREF)
-        if lead >= 0 and text[lead:start] == _WORD_DEREF and text[end:end + 1] == ")" and off in fields:
+        lead = start - len(deref)
+        if lead >= 0 and text[lead:start] == deref and text[end:end + 1] == ")" and off in fields:
             start, end, new = lead, end + 1, f"{elem}.{fields[off]}"
         text = text[:start] + new + text[end:]
         pos = start + len(new)
 
 
-def annotate_record_locals(lines, rec=None):
+def _annotate_record_calls(text, rec):
+    """F(args) + N for a routine F that returns a record pointer -> &F(args)->field; a read -> F(args)->field."""
+    fields, deref = rec["fields"], _DEREF[rec["width"]]
+    for fn in rec["returned_by"]:
+        pat = re.compile(rf"\b{re.escape(fn)}\(")
+        pos = 0
+        while True:
+            m = pat.search(text, pos)
+            if not m:
+                break
+            close = _match_close(text, m.end() - 1)
+            if close < 0:
+                break
+            call = text[m.start():close + 1]
+            s0, e0, off = m.start(), close + 1, 0
+            tail = re.match(r" \+ (\d+)\)", text[e0:])
+            if tail and s0 >= 1 and text[s0 - 1] == "(":
+                s0, e0, off = s0 - 1, e0 + tail.end(), int(tail.group(1))
+            if off not in fields:
+                pos = close + 1; continue
+            lead = s0 - len(deref)
+            if lead >= 0 and text[lead:s0] == deref and text[e0:e0 + 1] == ")":
+                s0, e0, new = lead, e0 + 1, f"{call}->{fields[off]}"
+            elif off:
+                new = f"&{call}->{fields[off]}"
+            else:
+                pos = close + 1; continue                       # a bare call: the pointer itself
+            text = text[:s0] + new + text[e0:]
+            pos = s0 + len(new)
+    return text
+
+
+def annotate_record_access(text, labels, rec=None):
+    for r in ([rec] if rec else _RECORDS):
+        text = _annotate_one_record(text, labels, r)
+        text = _annotate_record_calls(text, r)
+    return text
+
+
+def annotate_record_locals(lines, rec=None, labels=None):
     """[(addr, indent, text)] -> the same, with a record-pointer local's accesses as local->field."""
-    rec = rec or _RECORD
-    if not rec:
-        return lines
-    fields = rec["fields"]
+    for r in ([rec] if rec else _RECORDS):
+        lines = _record_locals_one(lines, r, labels)
+    return lines
+
+
+def _record_locals_one(lines, rec, labels):
+    fields, deref = rec["fields"], re.escape(_DEREF[rec["width"]])
+    table = re.escape(_table_name(labels, rec)) if labels else r"\w+"
     assigns = {}
     for _a, _i, t in lines:
         for m in re.finditer(r"\b(local\d+) = ", t):
             assigns.setdefault(m.group(1), []).append(t)
     ptrs = [v for v, ts in assigns.items()
-            if len(ts) == 1 and re.search(rf"\b{v} = &\w+\[[^;]*\];", ts[0]) and not re.search(rf"\b{v} = &\w+\[[^;]*\]\.", ts[0])]
+            if len(ts) == 1 and re.search(rf"\b{v} = &{table}\[[^;]*\];", ts[0])
+            and not re.search(rf"\b{v} = &{table}\[[^;]*\]\.", ts[0])]
     if not ptrs:
         return lines
     out = []
     for a, i, t in lines:
         for v in ptrs:
-            t = re.sub(rf"\*\(word\*\)\(\({v} \+ (\d+)\)\)",
+            t = re.sub(rf"{deref}\({v} \+ (\d+)\)\)",
                        lambda m: f"{v}->{fields[int(m.group(1))]}" if int(m.group(1)) in fields else m.group(0), t)
-            t = re.sub(rf"\*\(word\*\)\({v}\)", f"{v}->{fields[0]}", t) if 0 in fields else t
+            t = re.sub(rf"{deref}{v}\)", f"{v}->{fields[0]}", t) if 0 in fields else t
             t = re.sub(rf"\({v} \+ (\d+)\)",
                        lambda m: f"&{v}->{fields[int(m.group(1))]}" if int(m.group(1)) in fields else m.group(0), t)
         out.append((a, i, t))
@@ -524,14 +587,13 @@ def annotate_record_locals(lines, rec=None):
 
 
 def record_declarations(labels, rec=None):
-    """The C declaring the record table the annotations use, or "" (prepended to a bank's C)."""
-    rec = rec or _RECORD
-    if not rec:
-        return ""
-    table = (_label_name(labels, rec["base"]) if labels else None) or f"{rec['type']}_table"
-    members = " ".join(f"word {n};" for _o, n in sorted(rec["fields"].items()))
-    return (f"struct {rec['type']} {{ {members} }};    /* {rec['stride']} bytes */\n"
-            f"extern struct {rec['type']} {table}[];    /* at ${rec['base']:04X} */\n\n")
+    """The C declaring the record tables the annotations use, or "" (prepended to a bank's C)."""
+    out = ""
+    for r in ([rec] if rec else _RECORDS):
+        members = " ".join(f"{r['width']} {n};" for _o, n in sorted(r["fields"].items()))
+        out += (f"struct {r['type']} {{ {members} }};    /* {r['stride']} bytes */\n"
+                f"extern struct {r['type']} {_table_name(labels, r)}[];    /* at ${r['base']:04X} */\n")
+    return out + ("\n" if out else "")
 
 
 # Labelled RAM arrays indexed by arithmetic, rendered by array name. A bank-level pass over the whole
@@ -542,17 +604,16 @@ def record_declarations(labels, rec=None):
 # B must be a labelled RAM address and E must not be a literal, so a number is never renamed (a bare
 # 0x6F4F with no index is left alone: there an address and a number look the same). An array used in
 # two shapes in one file renders only its commoner shape, so no declaration contradicts a use. The
-# record table (_RECORD) is excluded: annotate_record_access owns it.
+# record tables (_RECORDS) are excluded: annotate_record_access owns them.
 _RAM_LO, _RAM_HI = 0x6000, 0x8000
 
 
 def _ram_array_sites(text, labels):
     """[(start, end, name, shape, stride, index, deref)] for every array-shaped site, innermost first."""
     sites = []
-    rec = _RECORD
     for m in re.finditer(r" \+ 0x([67][0-9A-Fa-f]{3})\)", text):
         b = int(m.group(1), 16)
-        if not _RAM_LO <= b < _RAM_HI or (rec and rec["base"] <= b < rec["base"] + rec["stride"]):
+        if not _RAM_LO <= b < _RAM_HI or any(r["base"] <= b < r["base"] + r["stride"] for r in _RECORDS):
             continue
         name = _label_name(labels, b)
         if not name:
@@ -1914,7 +1975,7 @@ def decompile(filepath, sub_addr, labels=None, var_names=None, collect=None):
         # once rendered, so running first would let it rewrite `!((x > 0))` that it never touched.
         text = annotate_record_access(text, labels)
         annotated.append((addr, indent, text))
-    for addr, indent, text in annotate_record_locals(annotated):     # needs the whole sub
+    for addr, indent, text in annotate_record_locals(annotated, labels=labels):     # needs the whole sub
         text = apply_var_names(text, var_names)   # var-walk: LAST, so arg1->output -> fief->output
         if text.endswith(':') and not text.startswith('//'):
             # `L_XXXX:` goto labels sit at column 0 (existing convention); Phase-3 inlined
