@@ -954,9 +954,10 @@ regexes in each na1 tool, and each tool rebuilt PPU memory by watching *na1's ow
   - OAM DMA from page $06 every frame.
 - `extract-chr-from-trace` now counts a CHR byte written by any routine (identical on the trace
   at hand).
-- na1 `title-nametable` / `title-render` cannot run: their input, `nametable_bytes.txt`, is not in
-  the repo. They are 🧪 one-shots, kept for provenance; a re-capture would come from
-  `PPUWrites.vram[$2000:$2400]`.
+- na1 `title-nametable` / `title-render` do not run as they stand, but their input is there:
+  `nametable_bytes.txt` is tracked at `nobunaga/`, and the scripts open it next to themselves after
+  the move into `tools/` (corrected 2026-10-28; this note had said the file was missing, and NA1's
+  attic review retired them on it for a day). A path fix, for the assets phase.
 
 93 tests pass. **Row Q is closed.** Next: R (static RE of native games).
 
