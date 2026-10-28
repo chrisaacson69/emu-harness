@@ -251,6 +251,9 @@ def decompiler_for(name, bank, raw=False):
     import emu_harness.vm.koei.nes.vm_decompile as VC
     if raw:
         VC.STRUCTURE = False; VC.STRUCTURE_V2 = False; VC.STRUCTURE_DREAM = False
+    else:
+        VC.STRUCTURE = True      # the flags are module state: a raw run earlier in the process left it off
+
     labs = bank_scoped_labels(cfg, bank)              # addr -> (name, comment)
     sysmap = build_syscall_names(cfg, labs)           # game-aware syscall id->name (TOML-driven)
     if sysmap:

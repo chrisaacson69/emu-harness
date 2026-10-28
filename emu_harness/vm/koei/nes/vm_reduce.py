@@ -816,18 +816,17 @@ def _structure_loop(h, ctx, outer_loop):
         ctx.visited.add(h)
         body, _u = _structure(body_entry, _STOP, body_pdom, ctx, lp)
         body = _strip_trailing_continue(body)
-        # Only the test EXPRESSION lifts to `while (cond)`. Any statements the header block
-        # carries before the test (the ROTATED for-loop's update, e.g. `i += 2`) keep their
-        # address and sit at the body BOTTOM — where the listing already places them (body is
-        # laid out before the bottom test), so this is a lift, not a side-effect reorder. This
-        # is sound only for a SINGLE-exit loop (a clean for-loop): with a COMPOUND exit
-        # (>1 edge to e, e.g. `while (i<6 && p<n)` split across two test blocks), deferring
-        # the update past the second test changes first-iteration semantics -> bail.
+        # Only the test EXPRESSION lifts to `while (cond)`, so a header that carries statements
+        # before its test cannot be a pre-test while: those statements run on EVERY arrival at the
+        # test, the loop's entry included. Lifting them to the body bottom (the old rule, which
+        # read them as a rotated for-loop's update) drops the entry run, and the C reads a variable
+        # before setting it — the address-keyed gate cannot see it, since the CFG is unchanged
+        # (2026-10-28: 42 NA1 loops whose header was a phi's merge store, avg_fief_tax_rate $952F).
+        # A for-loop's update lives in the LATCH, not the header. coalesce_store_phis now empties
+        # the phi headers before structuring; any header that still has statements bails here to
+        # the do-while / while(1) / honest-goto forms, which keep the statements where they run.
         if h_stmts:
-            exit_edge_blocks = {nn for nn in loop if e in ctx.full_cfg[nn]}
-            if len(exit_edge_blocks) > 1:
-                raise _NotReducible('compound_pretest')
-            body = body + [('block', h, h_stmts)]
+            raise _NotReducible('pretest_header_stmts')
         node = ('loop', 'while', h, cond, body, None, [])
         ctx.visited |= set(loop)
         return node, set(loop) | shims, e

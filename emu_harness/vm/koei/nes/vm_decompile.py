@@ -1222,6 +1222,53 @@ def inline_trivial_temps(text):
     return "\n".join(out)
 
 
+_PHI_COPY = re.compile(r'^\s*([A-Za-z_]\w*)\s*=\s*(phi_val_([0-9a-f]{4}))\s*;\s*(?://.*)?$')
+_PHI_DEF = re.compile(r'^(\s*)(phi_val_[0-9a-f]{4})(\s*=\s*.+;\s*(?://.*)?)$')
+
+
+def coalesce_store_phis(lines):
+    """Pre-structure pass: fold a value-merge phi whose merge STORES it into a plain variable back into
+    that variable. `phi_val_M = X;` in each pred becomes `DEST = X;` and the merge's `DEST = phi_val_M;`
+    goes. The phi exists only because the decoder must capture each pred's regA before the shared
+    store (vm_cfg.value_merge_phis); when the consumer is a store, the store's destination is a name
+    every pred can write itself.
+
+    Sound by construction: value_merge_phis fires each def at the pred's exit (its jump, or the merge's
+    first op for the fall-through pred), so nothing runs between a def and the merge's store. Each line
+    keeps its address tag, so no statement changes block. The CFG is untouched (only statements change).
+
+    Why it is needed, not just tidier: the merge store is the loop HEADER's only statement in a rotated
+    loop (`goto H; B: body; H: i = phi; if (i < n) goto B;`). Lifting that header into `while (i < n)`
+    leaves the store at the body bottom, where it no longer runs on entry; the printed C then reads `i`
+    before setting it (42 NA1 loops, e.g. avg_fief_tax_rate $952F). Coalesced, the header is a pure
+    test. Guards: DEST is an identifier; the phi appears ONLY in its defs and that one copy."""
+    uses = {}
+    for k, (_a, _i, text) in enumerate(lines):
+        for nm in re.findall(r'\bphi_val_[0-9a-f]{4}\b', text):
+            uses.setdefault(nm, []).append(k)
+    dest_of, drop = {}, set()
+    for nm, ks in uses.items():
+        copies = [k for k in ks if (m := _PHI_COPY.match(lines[k][2])) and m.group(2) == nm]
+        defs = [k for k in ks if (m := _PHI_DEF.match(lines[k][2])) and m.group(2) == nm]
+        if len(copies) != 1 or len(defs) + 1 != len(ks):
+            continue
+        dest = _PHI_COPY.match(lines[copies[0]][2]).group(1)
+        if dest.startswith('phi_'):
+            continue
+        dest_of[nm], drop = dest, drop | {copies[0]}
+    if not dest_of:
+        return lines
+    out = []
+    for k, (a, ind, text) in enumerate(lines):
+        if k in drop:
+            continue
+        m = _PHI_DEF.match(text)
+        if m and m.group(2) in dest_of:
+            text = f"{m.group(1)}{dest_of[m.group(2)]}{m.group(3)}"
+        out.append((a, ind, text))
+    return out
+
+
 def _rebind_self_store(state, dest):
     """Emit-time fix for the "name-stale after a self-modifying store" class.
 
@@ -1865,6 +1912,7 @@ def decompile(filepath, sub_addr, labels=None, var_names=None, collect=None):
     #   L_X:
     #     <else-body>
     #   L_Y:
+    state.lines = coalesce_store_phis(state.lines)
     structured_ungated, gated_fallback = state.lines, False
     structurer = None
     if STRUCTURE and STRUCTURE_DREAM:
@@ -2265,6 +2313,13 @@ def _fold_while(lines, cfg, leaders, loop, u, h, multi=False):
         elif kind == 'goto' and tgt == h:
             idx_entry_guard = i                      # guard from outside (removed)
     if idx_h_test is None or not loop_idxs:
+        return lines
+    # A header statement other than its test runs on EVERY arrival at the test, the entry included;
+    # left in place it lands at the body bottom and the entry run is lost (the C reads a variable
+    # before setting it, CFG unchanged so the gate passes). Same rule as vm_reduce's
+    # 'pretest_header_stmts' bail; coalesce_store_phis empties the common case (a phi merge store).
+    if any(block_of(a) == h and i != idx_h_test and t.strip() != f"L_{h:04X}:"
+           for i, (a, _ind, t) in enumerate(lines)):
         return lines
     if multi:
         idx_backedge = None    # keep every in-body `goto L_h` -> `continue` (post-pass)

@@ -431,3 +431,45 @@ def test_batch_decompile_renders_the_var_walk_names(tmp_path):
     body = text[text.index(f"sub ${addr:04X}\n"):]
     head = next(ln for ln in body.splitlines() if ln.startswith("word "))
     assert f"word {names['arg1']}" in head, head
+
+
+def test_coalesce_store_phis_folds_a_merge_store_back_into_its_variable():
+    """A value-merge phi consumed by a store becomes the store's variable in every pred; a phi with any
+    other reader (a branch, a return) is left alone."""
+    from emu_harness.vm.koei.nes.vm_decompile import coalesce_store_phis
+    lines = [(0x10, 1, "phi_val_0020 = 0;"), (0x10, 1, "goto L_0020;"), (0x18, 0, "L_0018:"),
+             (0x18, 1, "phi_val_0020 = (i + 1);"), (0x20, 0, "L_0020:"), (0x20, 1, "i = phi_val_0020;"),
+             (0x20, 1, "if (i < n) goto L_0018;")]
+    out = coalesce_store_phis(lines)
+    assert [t for _a, _i, t in out] == ["i = 0;", "goto L_0020;", "L_0018:", "i = (i + 1);", "L_0020:",
+                                       "if (i < n) goto L_0018;"]
+    assert [a for a, _i, _t in out] == [0x10, 0x10, 0x18, 0x18, 0x20, 0x20]      # every line keeps its block
+    branch = lines[:5] + [(0x20, 1, "if (phi_val_0020) goto L_0018;")]
+    assert coalesce_store_phis(branch) == branch
+
+
+def test_rotated_loop_sets_its_variable_before_the_first_test(tmp_path):
+    """A rotated loop's header runs on entry too. Lifting it into `while (C)` put its statements at the
+    body bottom, so the printed C read a variable before setting it: avg_fief_tax_rate's `fief` (a phi
+    merge store, 42 NA1 loops) and prompt_roll_stat_value's first roll (a header that does work, 9 more).
+    The CFG was unchanged, so cfg_gate passed all 51 (2026-10-28)."""
+    import pytest
+    from emu_harness.vm.koei.nes import titles
+    if not titles.game_cfg("na1")["_rom"].exists():
+        pytest.skip("na1-decompiler ROM not present")
+    asm, c = tmp_path / "b.asm", tmp_path / "b.c"
+    titles.disasm("na1", 0, str(asm))
+    titles.decompile("na1", 0, str(asm), str(c))
+    text = c.read_text(encoding="utf-8")
+
+    def body(addr):
+        s = text[text.index(f"sub ${addr:04X}\n"):]
+        return s[:s.index("\n}\n")]
+
+    avg = body(0x952F)                                         # avg_fief_tax_rate
+    assert "phi_val" not in avg
+    assert avg.index("fief = 0;") < avg.index("while ("), avg
+    roll = body(0x85FC)                                        # prompt_roll_stat_value
+    # the roll IS the loop header ($8612): it must stay under its label (reached by the entry goto),
+    # not be lifted below a `while (` at the body bottom
+    assert roll.index("L_8612:") < roll.index("rng_mod(50)"), roll
