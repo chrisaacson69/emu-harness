@@ -411,3 +411,23 @@ def test_record_pointer_calls_render_as_arrow_fields():
         assert A(keep) == keep, keep
     # a read of another width keeps its cast over the field's address, as the province rule does
     assert A("x = *(word*)((dr(k) + 4));") == "x = *(word*)(&dr(k)->charisma);"
+
+
+def test_batch_decompile_renders_the_var_walk_names(tmp_path):
+    """titles.decompile (the path that regenerates a title's source/) must apply the registry's
+    [vars.bankN."0xADDR"] frame-slot names. It did not from the engine's graduation until 2026-10-28:
+    every slot printed positionally and the var walk's guard passed on an empty diff."""
+    import pytest
+    from emu_harness.vm.koei.nes import titles
+    if not titles.game_cfg("na1")["_rom"].exists():
+        pytest.skip("na1-decompiler ROM not present")
+    from emu_harness.vm.koei.nes.vm_decompile import load_var_names
+    vm = load_var_names(titles.game_cfg("na1")["_labels"])
+    (bank, addr), names = next(((k, v) for k, v in sorted(vm.items()) if k[0] == 15 and "arg1" in v))
+    asm, c = tmp_path / "b.asm", tmp_path / "b.c"
+    titles.disasm("na1", bank, str(asm))
+    titles.decompile("na1", bank, str(asm), str(c))
+    text = c.read_text(encoding="utf-8")
+    body = text[text.index(f"sub ${addr:04X}\n"):]
+    head = next(ln for ln in body.splitlines() if ln.startswith("word "))
+    assert f"word {names['arg1']}" in head, head

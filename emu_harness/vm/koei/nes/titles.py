@@ -278,12 +278,16 @@ def decompile(name, bank, asm_in, out=None, raw=False):
     VC, cfg, labs, sysmap = decompiler_for(name, bank, raw)
     text = Path(asm_in).read_text(encoding="utf-8")
     addrs = [int(x, 16) for x in re.findall(r';\s*sub\s+\$([0-9A-Fa-f]+)', text)]
+    # The var walk's frame-slot names ([vars.bankN."0xADDR"] in the title's registry). Only the
+    # standalone vm_decompile main() used to load them, so the batch path printed every slot
+    # positionally from the engine's graduation (2026-06-29) until 2026-10-28.
+    var_names = VC.load_var_names(cfg["_labels"])
     chunks, errs = [], 0
     for a in addrs:
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             try:
-                VC.decompile(asm_in, a, labels=labs)
+                VC.decompile(asm_in, a, labels=labs, var_names=var_names.get((int(bank), a)))
             except Exception as e:
                 print(f"// DECOMPILE ERROR @${a:04X}: {e}"); errs += 1
         chunks.append(buf.getvalue().rstrip())
