@@ -1264,8 +1264,9 @@ def decompile(filepath, sub_addr, labels=None, var_names=None, collect=None):
     print(f"// (body @ ${body_addr:04X})")
     print()
     # Real arg count (M3, 2026-06-03 — replaces the hardcoded arg1..arg4). The
-    # callee names its params arg1..arg4 = frame slots fp+0x0B/0D/0F/11, reached by
-    # the quick arg-opcodes (low nibble 0x0C-0x0F across the load/store/push families).
+    # callee names its params arg1, arg2, ... = frame slots fp+0x0B/0D/0F/11/13/..., arg1..arg4
+    # reached by the quick arg-opcodes (low nibble 0x0C-0x0F across the load/store/push families),
+    # arg5 and up only by the near / far forms (PUSH_near $13 = arg5).
     # The signature declares exactly the highest arg slot the BODY references — a
     # deterministic, per-sub measure that keeps bank_NN.c and the merged all_banks.c
     # byte-identical (no cross-bank caller pre-pass / global state). It names exactly
@@ -1965,7 +1966,7 @@ def decompile(filepath, sub_addr, labels=None, var_names=None, collect=None):
     for addr, indent, text in structured:
         if CPP_VAR:
             text = annotate_field_access(text, CPP_VAR, CPP_FIELDS)
-        for n in range(1, 5):
+        for n in range(1, arg_count + 1):          # the sub's real args (M3), not a fixed four
             text = annotate_field_access(text, f"arg{n}", ARG_FIELDS)
         text = annotate_array_access(text, labels)
         text = annotate_syscall(text)

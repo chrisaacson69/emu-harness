@@ -1,6 +1,6 @@
 export const meta = {
   name: 'var-walk',
-  description: 'Name a batch of subs\' frame slots (arg1..arg4 / localN): propose by role from the readable layer -> independent verify at the lower layer + caller propagation. Returns per-slot verdicts for the title\'s apply tool to write.',
+  description: 'Name a batch of subs\' frame slots (argN / localN): propose by role from the readable layer -> independent verify at the lower layer + caller propagation. Returns per-slot verdicts for the title\'s apply tool to write.',
   phases: [
     { title: 'Propose', detail: 'one agent per sub reads the readable layer + callers -> proposes a role name for each positional slot' },
     { title: 'Verify', detail: 'one independent agent per sub drops to the lower layer + caller pushes to confirm/amend/refute each slot' },
@@ -50,7 +50,7 @@ const PROPOSE_SCHEMA = {
       items: {
         type: 'object', additionalProperties: false, required: ['slot', 'name', 'role', 'confidence'],
         properties: {
-          slot: { type: 'string', description: 'the positional token being named: arg1..arg4 or localN' },
+          slot: { type: 'string', description: 'the positional token being named: argN or localN' },
           name: { type: 'string', description: 'snake_case role name. Leave as the SAME positional token (e.g. "local10") if it is reused scratch with no single role.' },
           role: { type: 'string', description: 'the usage that justifies the name: fields dereferenced, helper args, caller-pushed expression, loop/accumulator pattern' },
           confidence: { enum: ['HIGH', 'MED', 'LOW'] },
