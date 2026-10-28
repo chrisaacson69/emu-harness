@@ -14,6 +14,7 @@ export const meta = {
 //   bank    : int                          the code bank
 //   subs    : [{addr, name, slots:[...]}]   a batch of NAMED subs with positional slots (the title's prep)
 //   seeds   : string?                       role-inference vocabulary
+//   grouped : bool?                         with packets: ONE proposer + ONE verifier for the whole batch
 //   single  : bool?                         ONE fused agent per sub (propose + self-verify): half the agents,
 //                                           but no independent verifier; the coordinator must skim verdicts
 //   context : {title, readable, lower, marker, callers, rederive?, frame_hint?, frame_map?, caveats?}
@@ -182,6 +183,71 @@ const slotTally = (vs) => vs.reduce((m, v) => {
   for (const sl of (v.slots || [])) m[sl.verdict] = (m[sl.verdict] || 0) + 1
   return m
 }, {})
+
+// GROUPED mode (args.grouped, every sub packed): ONE proposer for the whole batch and ONE verifier,
+// each with every sub's packet. Each agent's one-time start-up write (~50k) dominated the packed run's
+// cost, so the batch pays it twice instead of 2 x subs times. Proposer and verifier stay separate
+// agents with separate packets (the verifier still never sees the C).
+const group = !!A.grouped && subs.length > 0 && subs.every(s => s.packet)
+const GROUP_PROPOSE_SCHEMA = { type: 'object', additionalProperties: false, required: ['subs'],
+  properties: { subs: { type: 'array', items: PROPOSE_SCHEMA } } }
+const GROUP_VERDICT_SCHEMA = { type: 'object', additionalProperties: false, required: ['subs'],
+  properties: { subs: { type: 'array', items: VERDICT_SCHEMA } } }
+
+const groupProposePrompt = (ss) => `You are STAGE 2 (symbol-table, variable side) of a multi-pass decompiler labeling bank_${bb} of ${C.title}. Below are ${ss.length} subs, each already understood. For EACH sub, propose a ROLE NAME for each listed positional frame slot. Treat the subs independently: a slot number means different things in different subs.
+
+EVERYTHING YOU NEED IS BELOW. Do not use tools, do not open files: answer from these packets (extracted from the generated C).
+
+${ss.map((s, i) => `######## SUB ${i + 1} of ${ss.length}: $${s.addr} "${s.name}" -- slots to name: ${s.slots.join(', ')}
+== its C ==
+${s.packet.c}
+== every caller's call line ==
+${s.packet.caller_c.join('\n')}
+== signatures of the subs it calls ==
+${s.packet.callees.join('\n') || '(none)'}`).join('\n\n')}
+
+Name each slot by its ROLE from how it is used: fields dereferenced, helpers it feeds, the caller-pushed expression, loop / accumulator pattern. snake_case.
+${seeds}
+${CAVEATS}
+
+Return ONLY the structured proposals: one entry per sub, in the order given, with addr exactly as given (4 hex, no $).`
+
+const groupVerifyPrompt = (ss, props) => `You are STAGE 3 (independent verifier / typecheck, variable side) for ${ss.length} subs in bank_${bb} of ${C.title}. A PROPOSER named their frame slots from the readable C. You do NOT get the C: check each sub at the LOWER layer, the VM bytecode, plus what each caller pushes. A slot name must be EARNED by its actual use there. Treat the subs independently.
+
+EVERYTHING YOU NEED IS BELOW. Do not use tools, do not open files: answer from these packets.
+${C.frame_map ? `\n${C.frame_map}\n` : ''}
+${ss.map((s, i) => {
+  const p = (props || []).find(x => String(x.addr).replace('$', '').toUpperCase() === s.addr)
+  return `######## SUB ${i + 1} of ${ss.length}: $${s.addr} "${s.name}" -- slots: ${s.slots.join(', ')}
+== its VM asm (ground truth) ==
+${s.packet.vm}
+== the VM asm before each call to it (the pushes; the last line is the call) ==
+${s.packet.caller_vm.join('\n\n')}
+== proposer's names (reference, NOT authority) ==
+${JSON.stringify(p && p.slots || [])}`
+}).join('\n\n')}
+
+Read which frame slots are loaded / stored / pushed and into what${frameHint}. Per slot verdict:
+- CONFIRMED: the VM asm and the caller pushes support the proposed name.
+- AMENDED: real role, wrong/imprecise name -> give the correct final_name.
+- REFUTED: reused scratch (two disjoint roles) OR not enough evidence -> the slot STAYS POSITIONAL (final_name ignored; say why).
+Each slot's 'summary' (<=140 chars) is written verbatim as the symbol comment; cite the VM evidence (opcode, slot, address).
+${seeds}
+${CAVEATS}
+
+Return ONLY the structured verdict: one entry per sub, in the order given, addr exactly as given, name echoed.`
+
+if (group) {
+  phase('Propose')
+  const props = await agent(groupProposePrompt(subs), { label: `propose:${subs.length} subs`, phase: 'Propose', schema: GROUP_PROPOSE_SCHEMA })
+  phase('Verify')
+  const ver = await agent(groupVerifyPrompt(subs, props && props.subs), { label: `verify:${subs.length} subs`, phase: 'Verify', schema: GROUP_VERDICT_SCHEMA })
+  const verified = (ver && ver.subs || []).filter(v => subs.some(s => s.addr === String(v.addr).replace('$', '').toUpperCase()))
+  const missing = subs.filter(s => !verified.some(v => String(v.addr).replace('$', '').toUpperCase() === s.addr)).map(s => s.addr)
+  if (missing.length) log(`NOT VERIFIED (left for the next batch): ${missing.join(', ')}`)
+  log(`bank_${bb} (grouped, 2 agents): ${verified.length}/${subs.length} subs, slot verdicts ${JSON.stringify(slotTally(verified))}`)
+  return { bank, verified, missing }
+}
 
 if (single) {
   phase('Name')
