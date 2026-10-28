@@ -16,7 +16,8 @@ export const meta = {
 //   seeds   : string?                       role-inference vocabulary
 //   single  : bool?                         ONE fused agent per sub (propose + self-verify): half the agents,
 //                                           but no independent verifier; the coordinator must skim verdicts
-//   context : {title, readable, lower, marker, callers, rederive?, frame_hint?, caveats?}
+//   context : {title, readable, lower, marker, callers, rederive?, frame_hint?, frame_map?, caveats?}
+//             (frame_map: how the lower layer addresses each slot; packed-mode verifiers get it)
 //             templates: {bb} = 2-digit bank, {addr} = 4-hex address
 // Returns { bank, verified:[{addr, name, slots:[{slot,final_name,verdict,confidence,summary}]}] }.
 
@@ -111,6 +112,53 @@ ${CAVEATS}
 
 Return ONLY the structured verdict.`
 
+// PACKED mode: the title's prep attached each sub's packet (prep --pack): the material the agents
+// above fetch with 2-4 tool calls, extracted deterministically. Each turn re-sends an agent's whole
+// standing context (~50k tokens), so an agent costs about turns x 50k; with the packet in the prompt
+// it needs one turn. The verifier's packet is the lower layer only (no C), so its independence is
+// structural, not a request.
+const packedProposePrompt = (s) => `You are STAGE 2 (symbol-table, variable side) of a multi-pass decompiler labeling bank_${bb} of ${C.title}. Sub $${s.addr} is "${s.name}", already understood. Propose a ROLE NAME for each positional frame slot: ${s.slots.join(', ')}.
+
+EVERYTHING YOU NEED IS BELOW. Do not use tools, do not open files: answer from this packet. (It is extracted from the generated C, so it is the same text you would read.)
+
+== The sub's C (the readable layer) ==
+${s.packet.c}
+
+== Every caller's call line (caller propagation: the expression pushed into each arg is strong evidence) ==
+${s.packet.caller_c.join('\n')}
+
+== Signatures of the subs it calls (their parameter names say what a pushed value is) ==
+${s.packet.callees.join('\n') || '(none)'}
+
+Name each slot by its ROLE from how it is used: fields dereferenced, helpers it feeds, the caller-pushed expression, loop / accumulator pattern. snake_case.
+${seeds}
+${CAVEATS}
+
+Return ONLY the structured proposals. Your output IS data for the verifier.`
+
+const packedVerifyPrompt = (s, p) => `You are STAGE 3 (independent verifier / typecheck, variable side) for $${s.addr} "${s.name}" in bank_${bb} of ${C.title}. A PROPOSER named its frame slots from the readable C. You do NOT get the C: you check at the LOWER layer, the VM bytecode, plus what each caller pushes. A slot name must be EARNED by its actual use there.
+
+EVERYTHING YOU NEED IS BELOW. Do not use tools, do not open files: answer from this packet.
+
+== The sub's VM asm (ground truth) ==
+${s.packet.vm}
+
+== The VM asm before each call to it (the pushes; the last line is the call) ==
+${s.packet.caller_vm.join('\n\n')}
+
+Read which frame slots are loaded / stored / pushed and into what${frameHint}.${C.frame_map ? `\n${C.frame_map}` : ''}
+
+Per slot verdict:
+- CONFIRMED: the VM asm and the caller pushes support the proposed name.
+- AMENDED: real role, wrong/imprecise name -> give the correct final_name.
+- REFUTED: reused scratch (two disjoint roles) OR not enough evidence -> the slot STAYS POSITIONAL (final_name ignored; say why).
+Each slot's 'summary' (<=140 chars) is written verbatim as the symbol comment; cite the VM evidence (opcode, slot, address).
+Proposer's names (reference, NOT authority): ${JSON.stringify(p && p.slots || [])}
+${seeds}
+${CAVEATS}
+
+Return ONLY the structured verdict.`
+
 const fusedPrompt = (s) => `You name the positional frame slots of sub $${s.addr} "${s.name}" in bank_${bb} of ${C.title}: you are BOTH proposer and verifier in one pass (token-economy mode). Give each slot a role name backed by lower-layer + caller evidence, not a guess.
 
 Project root is the cwd. Slots to name in $${s.addr}: ${s.slots.join(', ')}
@@ -149,9 +197,9 @@ if (single) {
 phase('Propose')
 const out = await pipeline(
   subs,
-  (s) => agent(proposePrompt(s), { label: `propose:${s.addr}`, phase: 'Propose', schema: PROPOSE_SCHEMA })
+  (s) => agent((s.packet ? packedProposePrompt : proposePrompt)(s), { label: `propose:${s.addr}`, phase: 'Propose', schema: PROPOSE_SCHEMA })
            .then(p => ({ s, p })),
-  ({ s, p }) => agent(verifyPrompt(s, p), { label: `verify:${s.addr}`, phase: 'Verify', schema: VERDICT_SCHEMA }),
+  ({ s, p }) => agent((s.packet ? packedVerifyPrompt : verifyPrompt)(s, p), { label: `verify:${s.addr}`, phase: 'Verify', schema: VERDICT_SCHEMA }),
 )
 
 const verified = out.filter(Boolean)
