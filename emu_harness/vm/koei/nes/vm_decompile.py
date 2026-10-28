@@ -534,6 +534,79 @@ def record_declarations(labels, rec=None):
             f"extern struct {rec['type']} {table}[];    /* at ${rec['base']:04X} */\n\n")
 
 
+# Labelled RAM arrays indexed by arithmetic, rendered by array name. A bank-level pass over the whole
+# bank's C (titles.decompile), because each array's C declaration must agree with every use in the file:
+#   ((E * S) + 0xB), S > 2   -> NAME[E]       declared byte NAME[][S]   (a row; e.g. a 9-byte name)
+#   ((E << 1) + 0xB)         -> &NAME[E]      declared word NAME[]      (a word read of it -> NAME[E])
+#   (E + 0xB)                -> &NAME[E]      declared byte NAME[]      (a byte read of it -> NAME[E])
+# B must be a labelled RAM address and E must not be a literal, so a number is never renamed (a bare
+# 0x6F4F with no index is left alone: there an address and a number look the same). An array used in
+# two shapes in one file renders only its commoner shape, so no declaration contradicts a use. The
+# record table (_RECORD) is excluded: annotate_record_access owns it.
+_RAM_LO, _RAM_HI = 0x6000, 0x8000
+
+
+def _ram_array_sites(text, labels):
+    """[(start, end, name, shape, stride, index, deref)] for every array-shaped site, innermost first."""
+    sites = []
+    rec = _RECORD
+    for m in re.finditer(r" \+ 0x([67][0-9A-Fa-f]{3})\)", text):
+        b = int(m.group(1), 16)
+        if not _RAM_LO <= b < _RAM_HI or (rec and rec["base"] <= b < rec["base"] + rec["stride"]):
+            continue
+        name = _label_name(labels, b)
+        if not name:
+            continue
+        end = m.end()
+        start = _match_open(text, end - 1)
+        if start < 0:
+            continue
+        x = text[start + 1:m.start()]                            # the index expression E (or (E*S), (E<<1))
+        shape, stride, idx = "byte", 1, x
+        g = re.fullmatch(r"\((.+) \* (\d+)\)", x)
+        if g and _match_open(x, len(x) - 1) == 0 and int(g.group(2)) > 2:
+            shape, stride, idx = "row", int(g.group(2)), g.group(1)
+        g = re.fullmatch(r"\((.+) << 1\)", x)
+        if g and _match_open(x, len(x) - 1) == 0:
+            shape, stride, idx = "word", 2, g.group(1)
+        if re.fullmatch(r"-?(0x[0-9A-Fa-f]+|\d+)", idx.strip()):
+            continue
+        deref = None
+        for cast in ("*(word*)(", "*(byte*)("):
+            if text[max(0, start - len(cast)):start] == cast and text[end:end + 1] == ")":
+                deref = cast
+        sites.append((start, end, name, shape, stride, idx, deref))
+    return sites
+
+
+def render_ram_arrays(text, labels):
+    """A bank's C -> (C with array-shaped RAM accesses by name, the declarations it needs)."""
+    if not labels:
+        return text, ""
+    uses = {}
+    for *_s, name, shape, stride, _i, _d in _ram_array_sites(text, labels):
+        uses.setdefault(name, {}).setdefault((shape, stride), 0)
+        uses[name][(shape, stride)] += 1
+    chosen = {n: max(c.items(), key=lambda kv: kv[1])[0] for n, c in uses.items()}
+    done = set()
+    while True:
+        sites = [s for s in _ram_array_sites(text, labels) if chosen.get(s[2]) == (s[3], s[4])]
+        if not sites:
+            break
+        start, end, name, shape, stride, idx, deref = max(sites, key=lambda s: s[0])   # rightmost first
+        if shape == "row":
+            new = f"{name}[{idx}]"
+        elif (shape, deref) in (("word", "*(word*)("), ("byte", "*(byte*)(")):
+            start, end, new = start - len(deref), end + 1, f"{name}[{idx}]"
+        else:
+            new = f"&{name}[{idx}]"
+        text = text[:start] + new + text[end:]
+        done.add(name)
+    decl = "".join(f"extern byte {n}[][{s}];\n" if sh == "row" else f"extern {sh} {n}[];\n"
+                   for n, (sh, s) in sorted(chosen.items()) if n in done)
+    return text, decl + ("\n" if decl else "")
+
+
 # --- Spec-independent dispatch: normalize the mnemonic from the OPCODE BYTE ---
 # The decompile dispatch below keys on the original ("old-spec") mnemonics. Rather
 # than couple to ANY mnemonic spelling, we derive the canonical name from the

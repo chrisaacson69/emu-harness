@@ -372,3 +372,25 @@ def test_record_access_renders_c_struct_arrays_and_only_that_shape():
                                          "z = &local5->morale;"]
     twice = ["local5 = &province_table_live[i];", "local5 = 3;", "x = *(word*)((local5 + 16));"]
     assert L(twice) == twice
+
+
+def test_ram_arrays_render_by_name_with_matching_declarations():
+    """Labelled RAM arrays indexed by arithmetic render by array name, and each file declares them with
+    the element type the shape implies. A literal index or a bare address is never touched, and an
+    array used in two shapes in one file renders only the commoner one."""
+    from emu_harness.vm.koei.nes import vm_decompile as VC
+    labs = {0x77A8: ("daimyo_name_table", ""), 0x7BEA: ("battle_side_strength_mod", ""),
+            0x6193: ("relations_matrix", ""), 0x6F4F: ("deduped_owner_list", "")}
+    src = ("a = draw(((d * 9) + 0x77A8));\n"
+           "b = *(word*)(((s << 1) + 0x7BEA));\n"
+           "c = (((i * 8) + j) + 0x6193);\n"
+           "e = f(0x6F4F, ((3 * 9) + 0x77A8));\n")
+    out, decl = VC.render_ram_arrays(src, labs)
+    assert out.splitlines()[:3] == ["a = draw(daimyo_name_table[d]);", "b = battle_side_strength_mod[s];",
+                                    "c = &relations_matrix[((i * 8) + j)];"]
+    assert out.splitlines()[3] == "e = f(0x6F4F, ((3 * 9) + 0x77A8));"
+    assert decl.strip().splitlines() == ["extern word battle_side_strength_mod[];", "extern byte daimyo_name_table[][9];",
+                                 "extern byte relations_matrix[];"]
+    mixed, decl2 = VC.render_ram_arrays("x = ((d * 9) + 0x77A8);\ny = ((d * 9) + 0x77A8);\nz = (k + 0x77A8);\n", labs)
+    assert mixed.splitlines() == ["x = daimyo_name_table[d];", "y = daimyo_name_table[d];", "z = (k + 0x77A8);"]
+    assert decl2.strip() == "extern byte daimyo_name_table[][9];"
