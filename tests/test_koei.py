@@ -473,3 +473,20 @@ def test_rotated_loop_sets_its_variable_before_the_first_test(tmp_path):
     # the roll IS the loop header ($8612): it must stay under its label (reached by the entry goto),
     # not be lifted below a `while (` at the body bottom
     assert roll.index("L_8612:") < roll.index("rng_mod(50)"), roll
+
+
+def test_a_stored_call_is_read_back_by_name_not_called_again(tmp_path):
+    """After `x = f();` a later read of the same value names x. Printing f() again reads as a second call
+    (a second rng roll, a second prompt) where the bytecode called once: 94 NA1 sites (2026-10-28)."""
+    import pytest
+    from emu_harness.vm.koei.nes import titles
+    if not titles.game_cfg("na1")["_rom"].exists():
+        pytest.skip("na1-decompiler ROM not present")
+    asm, c = tmp_path / "b.asm", tmp_path / "b.c"
+    titles.disasm("na1", 0, str(asm))
+    titles.decompile("na1", 0, str(asm), str(c))
+    text = c.read_text(encoding="utf-8")
+    roll = text[text.index("sub $85FC\n"):]
+    roll = roll[:roll.index("\n}\n")]                          # prompt_roll_stat_value
+    assert roll.count("rng_mod(50)") == 1, roll                # one CALL_abs_imm1 $CA52 at $8615
+    assert "draw_message(msg_fmt__3d, rolled_value)" in roll, roll

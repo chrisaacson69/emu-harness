@@ -1269,7 +1269,7 @@ def coalesce_store_phis(lines):
     return out
 
 
-def _rebind_self_store(state, dest):
+def _rebind_self_store(state, dest, word=True):
     """Emit-time fix for the "name-stale after a self-modifying store" class.
 
     The VM leaves the stored value live in regA (a STORE does not pop the accumulator --
@@ -1291,7 +1291,14 @@ def _rebind_self_store(state, dest):
         hit = re.search(r'(?<!\w)' + re.escape(dest) + r'(?!\w)', state.regA)
     else:
         hit = dest in state.regA          # deref dest (indirect self-store)
-    if hit:
+    # A CALL in the stored expression: the store already printed it, so a later read of regA must
+    # name `dest`, not print the call again. Re-printed, sequential C calls it twice (two rng rolls,
+    # two prompts) where the bytecode called once and reused the result: `x = number_input(1, 8);
+    # if (!(number_input(1, 8)))` (94 NA1 sites, 2026-10-28). Word stores only -- a byte store
+    # truncates while regA keeps the full word, so `dest` would not equal regA there -- and only to a
+    # call-free `dest` (an indirect `*(word*)(f(x))` would re-run f).
+    call = r'[A-Za-z_]\w*\('
+    if hit or (word and re.search(call, state.regA) and not re.search(call, dest)):
         state.regA = dest
 
 
@@ -1659,7 +1666,7 @@ def decompile(filepath, sub_addr, labels=None, var_names=None, collect=None):
             ptr = state.stack.pop() if state.stack else state.regB
             dest = f"*(byte*)({ptr})"
             state.emit(f"{dest} = {state.regA};")
-            _rebind_self_store(state, dest)
+            _rebind_self_store(state, dest, word=False)
         elif mnem == 'storeA_ind_word':
             ptr = state.stack.pop() if state.stack else state.regB
             dest = f"*(word*)({ptr})"
@@ -1842,7 +1849,7 @@ def decompile(filepath, sub_addr, labels=None, var_names=None, collect=None):
             elif sel == 2:    # $A2 store A -> byte
                 dest = frame_byte(off)
                 state.emit(f"{dest} = {state.regA};")
-                _rebind_self_store(state, dest)
+                _rebind_self_store(state, dest, word=False)
             else:             # $A3 push byte
                 state.stack.append(frame_byte(off))
         elif mnem == 'loadA_frameaddr':
@@ -1883,7 +1890,7 @@ def decompile(filepath, sub_addr, labels=None, var_names=None, collect=None):
         elif mnem == 'storeA_mem_byte':
             dest = _mem_name(operand, _op_hex(operand), labels)
             state.emit(f"{dest} = {state.regA};")
-            _rebind_self_store(state, dest)
+            _rebind_self_store(state, dest, word=False)
 
         # === Misc ===
         elif mnem == 'nop':
