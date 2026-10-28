@@ -44,7 +44,7 @@ paths.native = ["emu_harness/passes/native.py"]
 [[phase]]
 key  = "structure"
 name = "Structure"
-gate = "Primitives probed against the live handler; VM round-trip byte-identical; one call graph with a leaves-first order."
+gate = "Primitives probed against the live handler; VM round-trip byte-identical; the rendered C equals the ROM by value on the title's fixtures; one call graph with a leaves-first order."
 paths.common = ["emu_harness/passes/callgraph.py", "emu_harness/walk/prep.py"]
 paths.vm     = ["emu_harness/vm/koei/nes/callgraph.py", "emu_harness/vm/koei/nes/gates", "emu_harness/vm/koei/nes/vm_stack_effect.py", "emu_harness/vm/koei/nes/vm_assemble.py", "emu_harness/vm/koei/snes/vm_callgraph.py", "emu_harness/vm/koei/snes/vm_semantics.py"]
 paths.native = ["emu_harness/passes/native.py"]
