@@ -390,7 +390,7 @@ def annotate_field_access(expr, record_var="arg1", field_map=PROV_FIELDS):
 # Rewrite byte-array accesses `*(byte*)((IDX + 0xNNNN))` as `array_label[IDX]`
 # when 0xNNNN is a labeled address. Restricted to byte derefs with a non-strided
 # index (no `*`), so it does NOT touch the word-stride province records
-# (`(arg1 * 26) + 0x7001`) that annotate_field_access handles. This is what turns
+# (`(arg1 * 26) + 0x7001`), which annotate_record_access renders. This is what turns
 # the per-fief/per-daimyo flag arrays (ai_war_target_flags, fief_to_daimyo_map, …)
 # legible across every indexed access.
 # Index = a bare identifier (local9, arg1) optionally with a call's arg-parens
