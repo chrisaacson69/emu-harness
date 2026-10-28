@@ -15,6 +15,7 @@ export const meta = {
 //   subs    : [{addr, name, slots:[...]}]   a batch of NAMED subs with positional slots (the title's prep)
 //   seeds   : string?                       role-inference vocabulary
 //   grouped : bool?                         with packets: ONE proposer + ONE verifier for the whole batch
+//   effort  : string?                       grouped mode: reasoning effort for both agents (low|medium|high|xhigh|max)
 //   single  : bool?                         ONE fused agent per sub (propose + self-verify): half the agents,
 //                                           but no independent verifier; the coordinator must skim verdicts
 //   context : {title, readable, lower, marker, callers, rederive?, frame_hint?, frame_map?, caveats?}
@@ -189,6 +190,7 @@ const slotTally = (vs) => vs.reduce((m, v) => {
 // cost, so the batch pays it twice instead of 2 x subs times. Proposer and verifier stay separate
 // agents with separate packets (the verifier still never sees the C).
 const group = !!A.grouped && subs.length > 0 && subs.every(s => s.packet)
+const effortOpt = A.effort ? { effort: A.effort } : {}       // args.effort: low..max for both agents; omit = the session's
 const GROUP_PROPOSE_SCHEMA = { type: 'object', additionalProperties: false, required: ['subs'],
   properties: { subs: { type: 'array', items: PROPOSE_SCHEMA } } }
 const GROUP_VERDICT_SCHEMA = { type: 'object', additionalProperties: false, required: ['subs'],
@@ -239,9 +241,9 @@ Return ONLY the structured verdict: one entry per sub, in the order given, addr 
 
 if (group) {
   phase('Propose')
-  const props = await agent(groupProposePrompt(subs), { label: `propose:${subs.length} subs`, phase: 'Propose', schema: GROUP_PROPOSE_SCHEMA })
+  const props = await agent(groupProposePrompt(subs), { label: `propose:${subs.length} subs`, phase: 'Propose', schema: GROUP_PROPOSE_SCHEMA, ...effortOpt })
   phase('Verify')
-  const ver = await agent(groupVerifyPrompt(subs, props && props.subs), { label: `verify:${subs.length} subs`, phase: 'Verify', schema: GROUP_VERDICT_SCHEMA })
+  const ver = await agent(groupVerifyPrompt(subs, props && props.subs), { label: `verify:${subs.length} subs`, phase: 'Verify', schema: GROUP_VERDICT_SCHEMA, ...effortOpt })
   const verified = (ver && ver.subs || []).filter(v => subs.some(s => s.addr === String(v.addr).replace('$', '').toUpperCase()))
   const missing = subs.filter(s => !verified.some(v => String(v.addr).replace('$', '').toUpperCase() === s.addr)).map(s => s.addr)
   if (missing.length) log(`NOT VERIFIED (left for the next batch): ${missing.join(', ')}`)
