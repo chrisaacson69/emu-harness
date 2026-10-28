@@ -369,8 +369,9 @@ PROV_FIELDS = CPP_FIELDS                  # back-compat alias (NA1's province ma
 
 def set_schema(game):
     """Select the per-title record field maps and asset enums (called by koei_vm.decompile)."""
-    global CPP_VAR, CPP_FIELDS, ARG_FIELDS, _ARG_ENUMS, _ENUMS, _EXTOP_OVERRIDE
+    global CPP_VAR, CPP_FIELDS, ARG_FIELDS, _ARG_ENUMS, _ENUMS, _EXTOP_OVERRIDE, _RECORD
     CPP_VAR, CPP_FIELDS, ARG_FIELDS = _fields_of(game) or _DEFAULT_SCHEMA
+    _RECORD = _record_of(game)
     _ARG_ENUMS, _ENUMS = _load_asset_enums(game)
     _EXTOP_OVERRIDE = _EXTOP_OVERRIDES_NA1 if game == "na1" else {}
 
@@ -430,6 +431,107 @@ def annotate_array_access(text, labels):
             return f"{base}[{idx}]"
         return m.group(0)
     return _ARRAY_ACCESS_NAMED_RE.sub(rep_named, text)
+
+
+# Strided record tables as C arrays of structs (the title profile's [fields] type / base / stride).
+# The engine prints a record access as `((E * stride) + 0xADDR)`, the field folded into ADDR; this
+# renders it as &table[E].field, a word read of it as table[E].field, and the bare base as &table[E].
+# A local whose one assignment in the sub is &table[E] then reads as local->field. Only the
+# `(E * stride) + base..base+stride-1` shape matches, so a number such as 0x7530 is never touched,
+# and an offset with no field name (a byte field) is left as it was.
+def _record_of(game):
+    from emu_harness.vm.koei.nes.titles import load_games
+    f = load_games().get(game, {}).get("fields") or {}
+    if "base" not in f:
+        return None
+    return {"type": f["type"], "base": f["base"], "stride": f["stride"],
+            "fields": {int(k): v for k, v in f.get("province", {}).items()}}
+
+
+_RECORD = _record_of("na1")
+_WORD_DEREF = "*(word*)("
+
+
+def _match_open(text, close):
+    """Index of the '(' that the ')' at `close` closes, or -1."""
+    depth = 0
+    for i in range(close, -1, -1):
+        if text[i] == ")":
+            depth += 1
+        elif text[i] == "(":
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
+
+
+def annotate_record_access(text, labels, rec=None):
+    rec = rec or _RECORD
+    if not rec:
+        return text
+    base, stride, fields = rec["base"], rec["stride"], rec["fields"]
+    table = _label_name(labels, base) if labels else None
+    table = table or f"{rec['type']}_table"
+    pat = re.compile(rf" \* {stride}\) \+ 0x([0-9A-Fa-f]{{4}})\)")
+    pos = 0
+    while True:
+        m = pat.search(text, pos)
+        if not m:
+            return text
+        off = int(m.group(1), 16) - base
+        inner = _match_open(text, m.start() + len(f" * {stride}"))      # the ( before E
+        if not 0 <= off < stride or inner < 1 or text[inner - 1] != "(":
+            pos = m.end(); continue
+        start, end, idx = inner - 1, m.end(), text[inner + 1:m.start()]
+        tail = re.match(r" \+ (\d+)\)", text[end:])                  # (((E * s) + 0xB) + N)
+        if tail and start >= 1 and text[start - 1] == "(" and 0 <= off + int(tail.group(1)) < stride:
+            start, end, off = start - 1, end + tail.end(), off + int(tail.group(1))
+        if off and off not in fields:
+            pos = m.end(); continue
+        elem = f"{table}[{idx}]"
+        new = f"&{elem}.{fields[off]}" if off else f"&{elem}"
+        lead = start - len(_WORD_DEREF)
+        if lead >= 0 and text[lead:start] == _WORD_DEREF and text[end:end + 1] == ")" and off in fields:
+            start, end, new = lead, end + 1, f"{elem}.{fields[off]}"
+        text = text[:start] + new + text[end:]
+        pos = start + len(new)
+
+
+def annotate_record_locals(lines, rec=None):
+    """[(addr, indent, text)] -> the same, with a record-pointer local's accesses as local->field."""
+    rec = rec or _RECORD
+    if not rec:
+        return lines
+    fields = rec["fields"]
+    assigns = {}
+    for _a, _i, t in lines:
+        for m in re.finditer(r"\b(local\d+) = ", t):
+            assigns.setdefault(m.group(1), []).append(t)
+    ptrs = [v for v, ts in assigns.items()
+            if len(ts) == 1 and re.search(rf"\b{v} = &\w+\[[^;]*\];", ts[0]) and not re.search(rf"\b{v} = &\w+\[[^;]*\]\.", ts[0])]
+    if not ptrs:
+        return lines
+    out = []
+    for a, i, t in lines:
+        for v in ptrs:
+            t = re.sub(rf"\*\(word\*\)\(\({v} \+ (\d+)\)\)",
+                       lambda m: f"{v}->{fields[int(m.group(1))]}" if int(m.group(1)) in fields else m.group(0), t)
+            t = re.sub(rf"\*\(word\*\)\({v}\)", f"{v}->{fields[0]}", t) if 0 in fields else t
+            t = re.sub(rf"\({v} \+ (\d+)\)",
+                       lambda m: f"&{v}->{fields[int(m.group(1))]}" if int(m.group(1)) in fields else m.group(0), t)
+        out.append((a, i, t))
+    return out
+
+
+def record_declarations(labels, rec=None):
+    """The C declaring the record table the annotations use, or "" (prepended to a bank's C)."""
+    rec = rec or _RECORD
+    if not rec:
+        return ""
+    table = (_label_name(labels, rec["base"]) if labels else None) or f"{rec['type']}_table"
+    members = " ".join(f"word {n};" for _o, n in sorted(rec["fields"].items()))
+    return (f"struct {rec['type']} {{ {members} }};    /* {rec['stride']} bytes */\n"
+            f"extern struct {rec['type']} {table}[];    /* at ${rec['base']:04X} */\n\n")
 
 
 # --- Spec-independent dispatch: normalize the mnemonic from the OPCODE BYTE ---
@@ -1725,6 +1827,7 @@ def decompile(filepath, sub_addr, labels=None, var_names=None, collect=None):
         collect['body_addr'] = body_addr
 
     # Emit lines with field-name annotation
+    annotated = []
     for addr, indent, text in structured:
         if CPP_VAR:
             text = annotate_field_access(text, CPP_VAR, CPP_FIELDS)
@@ -1734,6 +1837,11 @@ def decompile(filepath, sub_addr, labels=None, var_names=None, collect=None):
         text = annotate_syscall(text)
         text = annotate_bank_call(text)
         text = simplify_expression(text)
+        # After simplify: its rules match paren-free operands only, and a record access has none
+        # once rendered, so running first would let it rewrite `!((x > 0))` that it never touched.
+        text = annotate_record_access(text, labels)
+        annotated.append((addr, indent, text))
+    for addr, indent, text in annotate_record_locals(annotated):     # needs the whole sub
         text = apply_var_names(text, var_names)   # var-walk: LAST, so arg1->output -> fief->output
         if text.endswith(':') and not text.startswith('//'):
             # `L_XXXX:` goto labels sit at column 0 (existing convention); Phase-3 inlined

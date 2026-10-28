@@ -349,3 +349,26 @@ def test_value_probe_refuses_what_it_cannot_read():
         compile_sub("word f(word arg1) {\n    local9 = arg1;\n    return local9;\n}\n", lambda n, a: 0)
     _n, k, fn = compile_sub("word f(word arg1, word arg2) {\n    return ((arg1 < arg2) ? arg1 : arg2);\n}\n", None)
     assert k == 2 and fn((0xFFFF, 1)) == 0xFFFF and fn((5, 3)) == 3      # signed unless cast
+
+
+def test_record_access_renders_c_struct_arrays_and_only_that_shape():
+    """A strided record table renders as a C array of structs (the profile's [fields] type / base /
+    stride). Only `(E * stride) + base..base+stride-1` matches: a number is never renamed, an offset with
+    no field name is left alone, and a local is a record pointer only if it is assigned once."""
+    from emu_harness.vm.koei.nes import vm_decompile as VC
+    rec = {"type": "province", "base": 0x7001, "stride": 26, "fields": {0: "gold", 8: "output", 16: "men", 18: "morale"}}
+    labs = {0x7001: ("province_table_live", "")}
+    A = lambda t: VC.annotate_record_access(t, labs, rec)
+    assert A("x = *(word*)(((i * 26) + 0x7013));") == "x = province_table_live[i].morale;"
+    assert A("f(((sel(k) * 26) + 0x7011));") == "f(&province_table_live[sel(k)].men);"
+    assert A("p = ((i * 26) + 0x7001);") == "p = &province_table_live[i];"
+    assert A("q = (((i * 26) + 0x7001) + 8);") == "q = &province_table_live[i].output;"
+    assert A("b = *(byte*)(((i * 26) + 0x7013));") == "b = *(byte*)(&province_table_live[i].morale);"
+    for keep in ("n = 0x7530;", "n = ((i * 26) + 0x7003);", "n = ((i * 7) + 0x7013);", "n = ((i * 26) + 0x7101);"):
+        assert A(keep) == keep, keep
+    L = lambda ts: [t for _a, _i, t in VC.annotate_record_locals([(0, 1, t) for t in ts], rec)]
+    assert L(["local5 = &province_table_live[i];", "x = *(word*)((local5 + 16));", "y = *(word*)(local5);",
+              "z = (local5 + 18);"]) == ["local5 = &province_table_live[i];", "x = local5->men;", "y = local5->gold;",
+                                         "z = &local5->morale;"]
+    twice = ["local5 = &province_table_live[i];", "local5 = 3;", "x = *(word*)((local5 + 16));"]
+    assert L(twice) == twice

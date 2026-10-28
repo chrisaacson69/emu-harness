@@ -287,7 +287,7 @@ def decompile(name, bank, asm_in, out=None, raw=False):
             except Exception as e:
                 print(f"// DECOMPILE ERROR @${a:04X}: {e}"); errs += 1
         chunks.append(buf.getvalue().rstrip())
-    blob = "\n\n".join(chunks) + "\n"
+    blob = VC.record_declarations(labs) + "\n\n".join(chunks) + "\n"
     entry_names = [labs[a][0] for k in ("syscall_entry_struct", "syscall_entry_simple")
                    for a in [cfg.get(k)] if a and a in labs]     # CALL-to-entry syscall convention
     blob = resolve_syscall_entry_calls(blob, entry_names, sysmap)
