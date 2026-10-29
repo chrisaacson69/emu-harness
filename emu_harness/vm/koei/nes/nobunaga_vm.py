@@ -249,6 +249,7 @@ class NobunagaVM:
         self.vm_call_depth = 0   # nested VM call depth — used for outermost-return detection
         self.host_call_stubs = {}  # VM addr (target of CALL_abs) -> python callable(vm) -> regL value
         self.syscall_log = []      # (task, name, kind) for each $F226 dispatch — observability
+        self.native_syscalls = set()  # tasks run by the ROM's own handler (see _native_syscall)
         self._rng = 0x1234         # deterministic RNG state for syscall_rng_next
         self.install_stub(0xF226, self._syscall_dispatch)  # kernel syscall dispatch ($F226)
 
@@ -500,6 +501,9 @@ class NobunagaVM:
         rw = self.mem.read_word
         task = rd(sp)
         name, kind = self.SYSCALLS.get(task, (f"syscall_{task:02X}", "TODO"))
+        if task in self.native_syscalls:
+            self.syscall_log.append((task, name, "NATIVE"))
+            return self._native_syscall()
 
         if task == 0x10:        # memcpy_banked: struct = [task][bank][src][dst][len]
             # at sp+0/+2/+4/+6/+8 (one word each; verified via the AFE1 battle-init
@@ -533,10 +537,12 @@ class NobunagaVM:
             for i in range(0x20):
                 a, c = self.mem.read(0x0700 + i), self.mem.read(0x0090 + i)
                 self.mem.write(0x0700 + i, c); self.mem.write(0x0090 + i, a)
-        elif task == 0x09:      # audio_load_voice: 3 bytes at $0725 + voice*3
+        elif task == 0x09:      # audio_load_voice: $0725 + voice*3 = [tempo_div, stream ptr lo, hi]
+            # The stream pointer is ONE word at sp+6 (NA1's handler $C3AD reads struct $56/$57);
+            # this used to take its high byte from sp+8, so every voice pointed into page 0.
             o = 0x0725 + rd(sp + 2) * 3
             self.mem.write(o, rd(sp + 4)); self.mem.write(o + 1, rd(sp + 6))
-            self.mem.write(o + 2, rd(sp + 8))
+            self.mem.write(o + 2, rd(sp + 7))
         elif task == 0x07:      # call_bank: switch to bank [sp+2], run its native
             # $8000 entry, restore bank. Mirrors native $C339 (save $0073 / set bank /
             # jsr $8000 / restore). The bank arg is at sp+2 (verified empirically: the
@@ -561,6 +567,21 @@ class NobunagaVM:
     # the fixed bank-15 vector tail; never a legitimate instruction-fetch target
     # (we test for it BEFORE fetching, so it is never executed).
     NATIVE_CALL_SENTINEL = 0xFFF9
+
+    def _native_syscall(self):
+        """Run this syscall through the ROM's own kernel: its syscall_dispatch ($F226) copies the
+        struct off the data stack, BRKs through the IRQ vector into the handler table and RTIs back.
+        Used for the tasks in `native_syscalls`, whose handlers touch only RAM and the APU (the sound
+        lane runs audio_load_voice / audio_control this way). The real CALL_abs_imm1 leaves the data
+        stack one word lower than this stub sees it: the handler's struct[2] (the task id at $50) is
+        the stub's sp+0. -> regL as the kernel leaves it."""
+        sp = self.vm_sp
+        self.vm_sp = (sp - 2) & 0xFFFF
+        ok = self._run_native_call(0xF226)
+        self.vm_sp = sp
+        if not ok:
+            raise RuntimeError(f"native syscall {self.mem.read(sp):#04x} did not return")
+        return self.regL
 
     def _run_native_call(self, entry, max_steps=2_000_000):
         """Run native 6502 code from `entry` until it RTSs back to a sentinel,

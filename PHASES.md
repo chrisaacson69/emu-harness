@@ -211,16 +211,21 @@ a generator clobber a curated file; publish conversions and analysis, never the 
 
 ## 7. Assets (`assets`)
 
-**Gate:** Renders come from ROM bytes through the library and match the live PPU.
+**Gate:** Renders come from ROM bytes through the library and match the live PPU; the game's own sound engine, run headless, writes what the live APU receives, write for write.
 
 | Track | Commands |
 |---|---|
 | both | *library* `machines.nes.ppu`, `machines.nes.canvas` (the virtual-canvas contract) |
-| vm | `vm.koei.nes.assets.*` (`chr_extract`, `portrait`, `province_map`, `strategic_map`, `animation`, `text`) |
+| both | **Sound:** `py -3.14 -m emu_harness.machines.nes.sound <adapter.py> [--wav DIR] [--json OUT]`. The title writes only an engine adapter (`machine` / `init` / `request` / `tick` and its `events`); the library taps the bus, captures, finds loops and renders (`machines.nes.apu`). Mappy: `sound_capture.py`; NA1: `nobunaga/tools/sound_engine.py`. The gate is the title's `sound_verify`: Mesen's watches replayed headless. |
+| vm | `vm.koei.nes.assets.*` (`chr_extract`, `portrait`, `province_map`, `strategic_map`, `animation`, `text`); for sound, `NobunagaVM.native_syscalls` (run the audio syscalls through the ROM's kernel) and `Memory.mmc1_serial` (native code that banks itself) |
 
 **Lessons** (*Assets*): render from ROM bytes with the real upload arguments, capture at runtime when a
 static hunt fails; title tools call the library for formats, decode and palettes (there were four
-palette copies, one wrong); the oracle is the live PPU.
+palette copies, one wrong); the oracle is the live PPU. Sound: never decode a title's music format to
+play it, run its engine, so a title owes only how the game drives it (Mappy: a trigger byte; NA1: a
+bytecode request plus a native NMI tick); hold (how long the game requests) and loop (the stream
+repeats by itself) are different facts; a stand-in the VM uses for a syscall is not the handler (NA1's
+`audio_control` stub never armed a voice); rendered audio stays out of public repos.
 
 ## 8. Live verification (`live`)
 
@@ -239,6 +244,22 @@ experiment to confirm; fix the instrument, not the game; oracle tests prove reac
 mutation, fail on an empty glob); a nil callback enum never fires in Mesen Lua; never capture the
 screen.
 
+
+## 9. Documentation (`docs`)
+
+**Gate:** Every name-address pair a current-state page quotes matches the registry (doccheck: 0 moved, 0 renamed), the pages and the site regenerate from committed sources, and nothing published points at a retired file.
+
+The first gate of the **companion track**: what is done *with* the decompile (mechanics write-ups, play
+tools, the site) rather than the decompile itself. Hand-written pages go stale when the walk renames what
+they quote; the gate checks the claims a page makes, against the registry.
+
+| Track | Commands |
+|---|---|
+| both | `py -3.14 -m emu_harness.build.doccheck <project> --docs <globs>`: each `name` ($ADDR) pair is ok, inside (a citation within the routine), moved, renamed or unknown. Scope it to current-state pages (chapters, appendices, command pages); logs and theses quote old names on purpose. |
+
+**Lessons** (*Documentation*): a page's claim that can be checked is the name-address pair; a citation
+inside a routine is not a wrong address; generate what can be generated (comments from the symbol files
+cannot drift); a site builder that copies but never prunes keeps retired files published.
 ---
 
 ## Status values

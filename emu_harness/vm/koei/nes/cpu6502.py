@@ -43,6 +43,12 @@ class Memory:
         self.trace_writes = False
         self.write_log = []
 
+        # Opt-in MMC1 serial port: native code that switches banks itself (NA1's set_prg_bank, which
+        # the music driver calls around every stream byte) needs it; the VM runners set banks
+        # explicitly and leave it off.
+        self.mmc1_serial = False
+        self._mmc1_shift = 0x10
+
     def switch_bank(self, bank):
         """MMC1 bank switching — set which 16KB bank maps to $8000-$BFFF."""
         self.bank_lo = bank
@@ -94,8 +100,24 @@ class Memory:
             self._mult[0] = val
         elif addr == 0x5206:                                 # MMC5 mult: multiplier
             self._mult[1] = val
-        # ROM writes ignored (we don't emulate MMC1 register writes here;
-        # bank switching is done explicitly via switch_bank())
+        elif addr >= 0x8000 and self.mmc1_serial:
+            self._mmc1_write(addr, val)
+        # other ROM writes ignored: bank switching is done explicitly via switch_bank()
+
+    def _mmc1_write(self, addr, val):
+        """MMC1 load register (NESdev Wiki, "MMC1"): bit 7 resets the shift register; otherwise bit 0
+        shifts in, LSB first, and the fifth write commits to the register its address selects. Only
+        PRG bank ($E000-$FFFF, low 4 bits) is modelled: KOEI's boards stay in mode 3 (16K at $8000,
+        last bank fixed at $C000); control and CHR writes are accepted and ignored."""
+        if val & 0x80:
+            self._mmc1_shift = 0x10
+            return
+        done = self._mmc1_shift & 1
+        self._mmc1_shift = (self._mmc1_shift >> 1) | ((val & 1) << 4)
+        if done:
+            if addr >= 0xE000:
+                self.bank_lo = self._mmc1_shift & 0x0F
+            self._mmc1_shift = 0x10
 
     def read_word(self, addr):
         return self.read(addr) | (self.read(addr + 1) << 8)

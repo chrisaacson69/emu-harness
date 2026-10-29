@@ -68,9 +68,9 @@ paths.native = []
 [[phase]]
 key  = "assets"
 name = "Assets"
-gate = "Renders come from ROM bytes through the library and match the live PPU."
-paths.common = ["emu_harness/machines/nes/ppu.py", "emu_harness/machines/nes/canvas.py", "emu_harness/machines/nes/ppuport.py", "emu_harness/machines/nes/bus.py"]
-paths.vm     = ["emu_harness/vm/koei/nes/assets"]
+gate = "Renders come from ROM bytes through the library and match the live PPU; the game's own sound engine, run headless, writes what the live APU receives, write for write."
+paths.common = ["emu_harness/machines/nes/ppu.py", "emu_harness/machines/nes/canvas.py", "emu_harness/machines/nes/ppuport.py", "emu_harness/machines/nes/bus.py", "emu_harness/machines/nes/sound.py", "emu_harness/machines/nes/apu.py"]
+paths.vm     = ["emu_harness/vm/koei/nes/assets", "emu_harness/vm/koei/nes/cpu6502.py"]
 paths.native = []
 
 [[phase]]
@@ -79,4 +79,14 @@ name = "Live verification"
 gate = "The game's own routine runs over live RAM for every input, and a planted fault fails the check."
 paths.common = ["emu_harness/backends/mesen", "emu_harness/machines/nes/live.py", "emu_harness/machines/nes/trace.py", "emu_harness/machines/nes/ppuport.py", "emu_harness/machines/nes/bus.py", "emu_harness/cpu/m6502/cpu.py"]
 paths.vm     = ["emu_harness/vm/koei/nes/nobunaga_vm.py"]
+paths.native = []
+
+# The companion track: what is done WITH the decompile (mechanics write-ups, play tools, the site),
+# after the pipeline above. Its first gate is that the pages still say what the code says.
+[[phase]]
+key  = "docs"
+name = "Documentation"
+gate = "Every name-address pair a current-state page quotes matches the registry (doccheck: 0 moved, 0 renamed), the pages and the site regenerate from committed sources, and nothing published points at a retired file."
+paths.common = ["emu_harness/build/doccheck.py", "emu_harness/backends/mesen/labels.py"]
+paths.vm     = []
 paths.native = []

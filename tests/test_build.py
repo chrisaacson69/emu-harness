@@ -129,3 +129,17 @@ def test_resolve_project_finds_a_folder_inside_a_sibling(tmp_path):
     (tmp_path / "other" / "mappy" / st.ROADMAP).write_text("")
     with pytest.raises(st.RoadmapError, match="ambiguous"):
         st.resolve_project("mappy", tmp_path)
+
+
+def test_doccheck_reads_each_pair_against_the_label_file(tmp_path):
+    from emu_harness.build import doccheck
+    mlb = tmp_path / "t.mlb"
+    mlb.write_text("NesPrgRom:3C100:music_driver:\nNesPrgRom:3C180:next_routine:\n"
+                   "NesInternalRam:0072:ppumask_shadow:\nNesPrgRom:3C200:sqrt_int:\n", encoding="utf-8")
+    (tmp_path / "p.md").write_text(
+        "`music_driver` ($C100) and `music_driver` ($C150), `ppumask_shadow` ($0071),\n"
+        "`cbcd_sqrt` ($C200), `no_such_name` ($D000), `$0072 ppumask_shadow`.\n", encoding="utf-8")
+    got = [(r[2], r[3], r[4]) for r in doccheck.check(tmp_path, mlb, ["*.md"])]
+    assert got == [("music_driver", 0xC100, "ok"), ("music_driver", 0xC150, "inside"),
+                   ("ppumask_shadow", 0x0071, "moved"), ("cbcd_sqrt", 0xC200, "renamed"),
+                   ("no_such_name", 0xD000, "unknown"), ("ppumask_shadow", 0x0072, "ok")]
