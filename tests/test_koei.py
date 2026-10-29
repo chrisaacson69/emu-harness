@@ -553,3 +553,26 @@ def test_record_pointer_fields_need_evidence():
     assert annotate_record_pointer_fields(whole, F, "province_table_live")[1][2] == "q = p->gold;"
     plain = [(1, 1, "*(word*)(x_ptr) = (*(word*)(x_ptr) + 1);"), (2, 1, "n = (x_ptr + 2);")]
     assert annotate_record_pointer_fields(plain, F, "province_table_live") == plain     # no evidence
+
+
+def test_merged_view_is_the_canonical_c_rekeyed():
+    """all_banks.c is built from the committed per-bank C, not decompiled again (the second path ran with
+    DREAM off: 349 of 499 subs in V1 form, 2026-10-29). Every sub's body must equal its bank file's once
+    the PRG re-key and the call notes are stripped, and both trampolines must resolve by address."""
+    import re, pytest
+    from emu_harness.vm.koei.nes.cli import decompile_merged as DM
+    src = DM.ROOT / "source" / "4-c"
+    if not (src / "bank_15.c").exists():
+        pytest.skip("na1-decompiler source/4-c not present")
+    subs_fn, decls = DM.source_subs(src)
+    records, _w = DM.build(subs_fn)
+    text = DM.render(records, [], decls)
+    assert len(records) == sum(len(subs_fn(b, None)[1]) for b in DM.CODE_BANKS) and any("struct province" in d for d in decls)
+    strip = lambda s: re.sub(r"\s*//[^\n]*", "", re.sub(r"\bL_p?[0-9A-Fa-f]{4,5}\b", "L", s))
+    canon = {}
+    for b in DM.CODE_BANKS:
+        for _stub, c in subs_fn(b, None)[1]:
+            canon[DM.fn_name_of(c)] = strip(c)
+    merged = {name: strip(t) for _p, _b, _c, name, t in records}
+    assert merged == canon
+    assert "-> bank10 audio entry" in text and re.search(r"-> bank2 entry \w+ \$", text)
