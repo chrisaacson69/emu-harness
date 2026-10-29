@@ -260,6 +260,27 @@ they quote; the gate checks the claims a page makes, against the registry.
 **Lessons** (*Documentation*): a page's claim that can be checked is the name-address pair; a citation
 inside a routine is not a wrong address; generate what can be generated (comments from the symbol files
 cannot drift); a site builder that copies but never prunes keeps retired files published.
+
+## Project layout
+
+Every title repo has the same shape, so the harness, the walks and a reader find things in the same
+place (adopted 2026-10-29; NA1 moves to it next, Mappy and the KOEI siblings at their revisits):
+
+```
+<repo>/
+  README.md  re-roadmap.toml  mesen-labels.toml (or labels.toml)  <title>.mlb
+  source/    the generated ladder: asm, labelled asm, VM listing, C
+  docs/      hand-written pages: chapters, appendices, command pages (the doc gate's scope)
+  assets/    committed renders; sound/ gitignored (the title's music)
+  tools/     the title's tools and adapters (sound_engine, sound_verify, ...)
+  site/      a site generator's templates and config, for a title that publishes one
+  traces/    captures, gitignored
+  .github/workflows/pages.yml   a published site is built by Actions, never committed
+```
+
+Rules: a tool resolves paths from its own file, never the working directory; a site is a build output
+(a committed copy duplicates the assets and keeps retired files published); the ROM, savestates and
+rendered audio are never committed.
 ---
 
 ## Status values
