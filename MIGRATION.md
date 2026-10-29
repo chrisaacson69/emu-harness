@@ -1655,6 +1655,35 @@ over the clusters whose names disagree (26 bytecode, 76 native):
 ro3k's `handler_match` and `native_match` stay as ro3k's own tools (ro3k vs NA1), and nothing
 outside ro3k imports them any more.
 
+## Native titles: the driver promotes, the facts stay (proposed 2026-10-29)
+
+Moving Mappy to the standard layout listed its 32 tools in one place. Every one already takes its
+*mechanism* from the library (descent, `NativeMap`, `Graph`, `walk.guard`, `write_mlb`, `Bus`/`PPUPort`).
+What each title writes again is the *driver*, the loop around the mechanism, fused with its constants.
+A KOEI title runs generic verbs over a profile (`titles disasm|decompile|emulate <title>`, `games.toml`).
+A native title has no profile and no verbs. Its first `tools/paths.py` (locations, ROM name and hash) is
+where a native profile starts.
+
+**The axis is the memory model, not native vs VM.** A flat address space (NROM; 2600 4K; 5200;
+Intellivision; Genesis's 68000) takes Mappy's discover as it is. A banked one (MMC1/MMC5; later 2600
+bankswitching; SNES LoROM/HiROM) needs the window model NA1 and UW use. A KOEI title is both: its native
+kernel runs one track and its bytecode another, so it does every pass twice. Whether something is title-specific or just
+the first example cannot be decided from one title (Chris), so each row names its second consumer and
+promotes only when that consumer runs it.
+
+| Driver | Copies now | Title facts it needs | Second consumer / blocker |
+|---|---|---|---|
+| **discover** (trace, descent, dispatch tables, stored pointers, pointer runs) | Mappy `trace_codegraph`, `static_expand`, `jump_tables`, `stored_pointers`, `pointer_tables`; NA1 `native_discover` (its row in the revisit table) | window, vectors, seeds, inline-dispatch stubs (~12 constants in Mappy's `code_map.py`) | Zelda (MMC1: the first banked native title) |
+| **naming-walk apply** (batch -> registry -> regen -> guard -> restore) | Mappy `apply_names`, `apply_vars`; NA1 `label-walk-apply`, `var-walk-apply`, `data-apply`; AeroBiz `walk_apply` | the registry file, the regen command | row A2: one registry schema (`labels.toml`/`vars.toml` vs `mesen-labels.toml`) |
+| **registry -> `.mlb`** (+ copy beside the store's ROM) | Mappy `mappy_mlb`; NA1 `mesen-labels --mlb`; UW `gen_labels` | the registry schema | row A2 |
+| **call-tree page** | Mappy `call_tree_page` (reads only `call_graph.json`) | none | any title with a `Graph`: now |
+| **CDL gap** (executed bytes the listing does not decode) | Mappy `cdl_gap` | the listing's decoded set, play logs | any title with a listing and play logs: now |
+| **xrefs** (vars, data frontier, data pointers) | Mappy `var_xref`, `data_frontier`, `data_pointers`; NA1 `data-xref`, `rom-xref`; koei `dataxref` | instruction starts, registry | Zelda |
+| **live-gate skeleton** (play a log on Mesen with exec watches, dump, replay headless, compare) | Mappy `live_verify`, `sound_verify`, `assets_verify`, `state_census`; NA1 `sound_verify` | watch PCs, pokes, the suite | a second native title with gates |
+
+Stay in the title: search adapters, demo replays, renderers over the game's own draw routines, the
+sound-lane adapter, walker runs, record schemas (game knowledge, not drivers).
+
 ## Per-project revisits (after the toolset is complete; one session each)
 
 Chris, 2026-10-23: "focus on the task of creating the toolset ... have each revisit in its own
