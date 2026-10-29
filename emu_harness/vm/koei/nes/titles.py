@@ -21,6 +21,7 @@ import sys, re
 from pathlib import Path
 
 from emu_harness.machines.nes.memory import Cart, Windows
+from emu_harness.roms import find_rom
 
 HERE = Path(__file__).resolve()
 SIBLINGS = HERE.parents[5]                         # nes -> koei -> vm -> emu_harness -> emu-harness -> the sibling root
@@ -41,7 +42,8 @@ def game_cfg(name):
         sys.exit(f"unknown game '{name}'; known: {', '.join(games)}")
     g = games[name]
     g["_root"] = SIBLINGS / g["repo"]
-    g["_rom"] = g["_root"] / g["rom"]
+    # the machine's ROM store first, then the title repo (emu_harness.roms); a wrong hash is an error
+    g["_rom"] = find_rom(g["rom"], g.get("rom_sha1"), fallback=[g["_root"]], missing_ok=True)
     g["_labels"] = g["_root"] / g.get("labels", "mesen-labels.toml")
     return g
 

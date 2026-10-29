@@ -7,3 +7,7 @@ mesen = 'C:\path\to\Mesen.exe'
 # Optional: a clone of github.com/mcgrew/nes-disasm6 (Apache-2.0; run, never vendored),
 # a contender in tools/disasm_bench.py.
 # nes_disasm6 = 'C:\path\to\nes-disasm6'
+
+# The ROM store: one folder per machine holding the titles' ROMs (copyrighted, never in a repo).
+# emu_harness.roms looks here first, then in the title repo. See PHASES.md, Project layout.
+# roms = 'C:\path	ooms'

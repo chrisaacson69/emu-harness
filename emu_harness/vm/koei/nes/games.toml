@@ -4,14 +4,16 @@
 # step the ROM's OWN interpreter — so bringing up a new title is NOT a fork, it's a few addresses.
 # Each [game] block is everything the shared toolchain (koei_vm.py) needs to retarget.
 #
-# `repo` is the sibling decompiler repo (cloned next to koei-nes/ and na1-decompiler/); the ROM lives
-# at <repo>/<rom>. The VM interpreter core is currently imported from na1dream (na1-decompiler) — see
+# `repo` is the sibling decompiler repo (cloned next to koei-nes/ and na1-decompiler/). The ROM is found
+# by emu_harness.roms: the machine's ROM store (config.toml `roms`), then <repo>/<rom>; `rom_sha1`, where
+# given, is checked. The VM interpreter core is currently imported from na1dream (na1-decompiler) — see
 # koei_vm.py; that core is the eventual relocation target into koei-nes.
 
 [na1]
 title          = "Nobunaga's Ambition"
 repo           = "na1-decompiler"
 rom            = "Nobunaga's Ambition (USA).nes"
+rom_sha1       = "1f7d440085e9bc17fa22b23744d611e69b978c07"   # whole file (emu_harness.roms)
 labels         = "mesen-labels.toml"
 vm_entry       = 0xE823          # JSR vm_entry stub target
 vm_entry_stub  = "20 23 E8"      # the 3 bytes a bytecode sub's $8003 begins with

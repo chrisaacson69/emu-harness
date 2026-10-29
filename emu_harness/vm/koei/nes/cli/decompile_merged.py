@@ -63,7 +63,7 @@ def source_subs(source_dir, pattern="bank_{bank:02d}.c"):
     def bank_subs(bank, _tmp_dir, on_sub=None):
         return {}, chunks[bank], 0
     return bank_subs, decls
-ROM_PATH = ROOT / "Nobunaga's Ambition (USA).nes"
+ROM_PATH = Path(_game_cfg("na1")["_rom"])                     # the ROM store, through the profile
 
 
 def prg_offset(bank, cpu):

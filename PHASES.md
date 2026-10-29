@@ -281,6 +281,13 @@ place (adopted 2026-10-29; NA1 moved to it the same day, Mappy and the KOEI sibl
 Rules: a tool resolves paths from its own file, never the working directory; a site is a build output
 (a committed copy duplicates the assets and keeps retired files published); the ROM, savestates and
 rendered audio are never committed.
+
+**The ROM store.** A ROM lives outside every repo, in one folder per machine (`roms` in `config.toml`,
+gitignored). A title names its ROM by file name and SHA-1 of the whole file (in its profile: `rom` /
+`rom_sha1` in `games.toml` for the KOEI NES titles), and its tools ask for it rather than build a path:
+`emu_harness.roms.find_rom` looks in the store, then the title repo (the fallback while titles move),
+and a wrong hash is an error wherever the file is. Mesen auto-loads a `.mlb` beside the ROM it opens,
+so a title's label exporter copies its committed `.mlb` into the store too. NA1 was first (2026-10-29).
 ---
 
 ## Status values
