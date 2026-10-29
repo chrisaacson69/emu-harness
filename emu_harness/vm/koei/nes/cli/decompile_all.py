@@ -26,7 +26,7 @@ import tempfile
 from contextlib import redirect_stdout
 from pathlib import Path
 
-# NA1's project root (nobunaga/) and labels, through its title profile (games.toml [na1]). They
+# NA1's project root (the na1-decompiler repo root) and labels, through its title profile (games.toml [na1]). They
 # used to be three levels up from this file, which stopped being NA1 when the package left
 # na1-decompiler (emu-harness MIGRATION.md row F1b).
 from emu_harness.vm.koei.nes.titles import game_cfg as _game_cfg

@@ -31,7 +31,7 @@ from pathlib import Path
 
 from emu_harness.vm.koei.nes.titles import game_cfg as _game_cfg
 
-ROOT = Path(_game_cfg("na1")["_root"])                         # nobunaga/, through the [na1] profile (F1b)
+ROOT = Path(_game_cfg("na1")["_root"])                         # na1-decompiler, through the [na1] profile (F1b)
 
 from emu_harness.vm.koei.nes import nobunaga_vm
 

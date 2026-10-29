@@ -19,7 +19,7 @@
  *   LOOP   (merged block is/reaches a back-edge) -> NOT freely duplicable.
  *
  * Compile -O0/-O1/-O2/-Os and diff (tools/probe-crossjump.py). -O0/-O1 = duplicated target;
- * -O2+ = cross-jumped. Cross-ref ../nobunaga/decompiler-atom-log.md (atom-5 / the 130-goto bucket).
+ * -O2+ = cross-jumped. Cross-ref na1-decompiler docs/decompiler-atom-log.md (atom-5 / the 130-goto bucket).
  */
 extern int  cond(int);
 extern void msg(int);

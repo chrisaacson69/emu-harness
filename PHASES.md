@@ -216,7 +216,7 @@ a generator clobber a curated file; publish conversions and analysis, never the 
 | Track | Commands |
 |---|---|
 | both | *library* `machines.nes.ppu`, `machines.nes.canvas` (the virtual-canvas contract) |
-| both | **Sound:** `py -3.14 -m emu_harness.machines.nes.sound <adapter.py> [--wav DIR] [--json OUT]`. The title writes only an engine adapter (`machine` / `init` / `request` / `tick` and its `events`); the library taps the bus, captures, finds loops and renders (`machines.nes.apu`). Mappy: `sound_capture.py`; NA1: `nobunaga/tools/sound_engine.py`. The gate is the title's `sound_verify`: Mesen's watches replayed headless. |
+| both | **Sound:** `py -3.14 -m emu_harness.machines.nes.sound <adapter.py> [--wav DIR] [--json OUT]`. The title writes only an engine adapter (`machine` / `init` / `request` / `tick` and its `events`); the library taps the bus, captures, finds loops and renders (`machines.nes.apu`). Mappy: `sound_capture.py`; NA1: `tools/sound_engine.py`. The gate is the title's `sound_verify`: Mesen's watches replayed headless. |
 | vm | `vm.koei.nes.assets.*` (`chr_extract`, `portrait`, `province_map`, `strategic_map`, `animation`, `text`); for sound, `NobunagaVM.native_syscalls` (run the audio syscalls through the ROM's kernel) and `Memory.mmc1_serial` (native code that banks itself) |
 
 **Lessons** (*Assets*): render from ROM bytes with the real upload arguments, capture at runtime when a
@@ -264,7 +264,7 @@ cannot drift); a site builder that copies but never prunes keeps retired files p
 ## Project layout
 
 Every title repo has the same shape, so the harness, the walks and a reader find things in the same
-place (adopted 2026-10-29; NA1 moves to it next, Mappy and the KOEI siblings at their revisits):
+place (adopted 2026-10-29; NA1 moved to it the same day, Mappy and the KOEI siblings move at their revisits):
 
 ```
 <repo>/

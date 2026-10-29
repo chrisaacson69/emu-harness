@@ -32,7 +32,7 @@ tools/
   *.py                   # active standalone tools (labels, call-index, xref, assemblers, renderers)
 ```
 
-Data anchors: the ROM and `mesen-labels.toml` live at the project root (`nobunaga/`);
+Data anchors: the ROM and `mesen-labels.toml` live at the project root (the na1-decompiler repo root; `nobunaga/` until 2026-10-29);
 the opcode table ships inside the package. Modules find them with `__file__`-relative
 paths, so commands work regardless of the current directory.
 
@@ -41,7 +41,7 @@ paths, so commands work regardless of the current directory.
 Run from the **`tools/` directory** so `na1dream` resolves as a top-level package:
 
 ```
-cd nobunaga/tools
+cd tools
 py -3 -m na1dream.cli.decompile_all            # regenerate the canonical C + asm oracles
 py -3 -m na1dream.cli.decompile_all --basic    # the basic goto-form (bank_NN.raw.c)
 py -3 -m na1dream.gates.cfg_gate --dream       # gate the canonical hybrid output (495/495)
@@ -80,7 +80,7 @@ catch-all output dir is the same smell as a flat `tools/`.
 
 | Class | What | Where | Versioned? |
 |---|---|---|---|
-| **Source** | hand-authored input/knowledge | `nobunaga/*.md` chapters, the ROM, `mesen-labels.toml`, `.xlsx` data | yes — it's input, not output |
+| **Source** | hand-authored input/knowledge | `docs/*.md` chapters, the ROM, `mesen-labels.toml`, `.xlsx` data | yes — it's input, not output |
 | **Oracle** | committed, deterministic, read-like-source deliverables | **`source/`** — the recovered game source as a pipeline ladder | yes — the project's payoff; regenerate only when a tool improves |
 | **Render / scratch** | regenerable from the ROM (graphics, traces, reports, dumps) | a gitignored renders tree, **in a kind subdir** | no — gitignored |
 

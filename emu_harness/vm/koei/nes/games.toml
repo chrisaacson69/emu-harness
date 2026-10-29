@@ -10,7 +10,7 @@
 
 [na1]
 title          = "Nobunaga's Ambition"
-repo           = "na1-decompiler/nobunaga"
+repo           = "na1-decompiler"
 rom            = "Nobunaga's Ambition (USA).nes"
 labels         = "mesen-labels.toml"
 vm_entry       = 0xE823          # JSR vm_entry stub target

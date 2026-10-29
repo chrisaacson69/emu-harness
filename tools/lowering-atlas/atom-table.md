@@ -6,7 +6,7 @@ created: 2026-06-05
 > The finite inverse-lowering table the [nobunaga](https://github.com/chrisaacson69/na1-decompiler/tree/main/nobunaga) decompiler is discovering one
 > failing sub at a time, sourced the cheap way: compile each construct and read the jump pattern.
 > Each row is one *forward* lowering; its inverse is a candidate pre-contraction atom in
-> `emu_harness/vm/koei/nes/vm_reduce.py`. Cross-checked against [decompiler-atom-log](https://github.com/chrisaacson69/na1-decompiler/blob/main/nobunaga/decompiler-atom-log.md).
+> `emu_harness/vm/koei/nes/vm_reduce.py`. Cross-checked against [decompiler-atom-log](https://github.com/chrisaacson69/na1-decompiler/blob/main/docs/decompiler-atom-log.md).
 
 **Provenance.** GCC 15.2.0 (msys2 ucrt64), `-O0 -fdump-tree-cfg` (GIMPLE CFG, pre-optimization).
 Regenerate: `py -3 tools/compile-dumps.py && py -3 tools/cfg-signature.py`. Corpus `corpus/*.c`.
@@ -91,7 +91,7 @@ tell them apart:
 
 Each row's inverse is a candidate **CFG pre-contraction** in `emu_harness/vm/koei/nes/vm_reduce.py` (rewrite
 the matched subgraph to a token before the region tree runs — the bottom-up move, same as the existing
-value-diamond/boolean-region pre-contractions). The procedure ([thesis](https://github.com/chrisaacson69/na1-decompiler/blob/main/nobunaga/decompiler-bottom-up-thesis.md)):
+value-diamond/boolean-region pre-contractions). The procedure ([thesis](https://github.com/chrisaacson69/na1-decompiler/blob/main/docs/decompiler-bottom-up-thesis.md)):
 write the inverse → delete the rung-6 handler it obsoletes → re-run `probe-cfg-reducibility.py` (a real
 atom clears several subs). This table tells you **which inversions exist** so you stop discovering them
 one-failing-sub-at-a-time and know when the table is closed.
@@ -120,7 +120,7 @@ prefixes) — the `$AD38` shape:
    *terminal* (sink) block is always CFG-preserving.
 2. **NA1's compiler DID cross-jumping.** The ROM contains the merged form (`$AD38`), so NA1's toolchain
    optimized at least to the tail-merge level — it was non-optimizing for *structure* (reducibility
-   holds) but applied cross-jumping. Refines the [bottom-up thesis](https://github.com/chrisaacson69/na1-decompiler/blob/main/nobunaga/decompiler-bottom-up-thesis.md)'s
+   holds) but applied cross-jumping. Refines the [bottom-up thesis](https://github.com/chrisaacson69/na1-decompiler/blob/main/docs/decompiler-bottom-up-thesis.md)'s
    "non-optimizing compiler" to "non-optimizing **except** tail-merge/cross-jump."
 3. **Two atom kinds ⇒ two decompiler strategies.** Base-lowering inverses (family-1, switch-shared-merge,
    if/while) are present at -O0 → the reducer structures them directly (a family-1 miss is a reducer

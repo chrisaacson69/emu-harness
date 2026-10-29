@@ -11,8 +11,8 @@ created: 2026-06-05
 **Moved here 2026-10-29** from na1-decompiler `lowering-atlas/` (last commit there `cbad080`), because the catalog is about structured lowering in general, not NA1. Its checking role, decompiled C lowered back to a CFG and compared with the bytecode, is cfg_gate's (`vm_cfg.lower_goto_cfg`); this stays as the forward catalog the structurers' atoms were sourced from (`b_or` in `vm_cfg.py`, the cross-jump result in NA1's DREAM thesis).
 
 **Served:** [nobunaga](https://github.com/chrisaacson69/na1-decompiler/tree/main/nobunaga) (NA1 — the NES reverse-engineering effort this serves).
-**Read first there:** [decompiler-bottom-up-thesis](https://github.com/chrisaacson69/na1-decompiler/blob/main/nobunaga/decompiler-bottom-up-thesis.md) (the *why*) ·
-[decompiler-atom-log](https://github.com/chrisaacson69/na1-decompiler/blob/main/nobunaga/decompiler-atom-log.md) (atoms found so far, by reverse search).
+**Read first there:** [decompiler-bottom-up-thesis](https://github.com/chrisaacson69/na1-decompiler/blob/main/docs/decompiler-bottom-up-thesis.md) (the *why*) ·
+[decompiler-atom-log](https://github.com/chrisaacson69/na1-decompiler/blob/main/docs/decompiler-atom-log.md) (atoms found so far, by reverse search).
 
 ## The thesis, in one paragraph
 
