@@ -168,10 +168,12 @@ def bank_view(name, bank):
     return vm, VD, cfg, base, size, VD.find_stubs(vm.mem, base, size)
 
 
-def disasm(name, bank, out=None):
+def disasm(name, bank, out=None, labeled=False):
+    """The bank's VM listing. labeled=False writes the decompiler's input; labeled=True the reading
+    view (routine names and branch labels only, the address as a right-margin comment)."""
     vm, VD, cfg, base, size, stubs = bank_view(name, bank)
     labels = {a: n for a, (n, _c) in bank_scoped_labels(cfg, bank).items()}
-    listing, _mis = VD.render(bank, stubs, vm.mem, labels, len(vm.labels))
+    listing, _mis = VD.render(bank, stubs, vm.mem, labels, len(vm.labels), labeled=labeled)
     if out:
         Path(out).write_text(listing, encoding="utf-8"); print(f"wrote {out} ({len(stubs)} subs)")
     else:
@@ -357,7 +359,8 @@ def main():
         return
     cmd = sys.argv[1]
     if cmd == "disasm":
-        disasm(sys.argv[2], int(sys.argv[3], 0), sys.argv[4] if len(sys.argv) > 4 else None)
+        a = [x for x in sys.argv[2:] if x != "--labeled"]
+        disasm(a[0], int(a[1], 0), a[2] if len(a) > 2 else None, labeled="--labeled" in sys.argv)
     elif cmd == "decompile":
         args = [a for a in sys.argv[2:] if a != "--raw"]; raw = "--raw" in sys.argv
         decompile(args[0], int(args[1], 0), args[2], args[3] if len(args) > 3 else None, raw=raw)

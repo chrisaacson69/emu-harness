@@ -497,8 +497,8 @@ def test_a_stored_call_is_read_back_by_name_not_called_again(tmp_path):
 
 def test_labeled_vm_listing_reads_by_name_and_keeps_every_address(tmp_path):
     """The reading view of the VM listing: a routine's name opens its block, `L_XXXX:` appears only where
-    something branches, in-routine jumps name their label, and every instruction keeps its address as a
-    right-margin comment (the C's `// $XXXX` tags grep to it). The decompiler's input is a separate file and
+    something branches, in-routine jumps name their label, and every instruction is indented under them
+    with its address first, as in Mappy's labeled listing (the C's `// $XXXX` tags grep to it). The decompiler's input is a separate file and
     does not change."""
     import pytest, re
     from emu_harness.vm.koei.nes import titles
@@ -513,7 +513,7 @@ def test_labeled_vm_listing_reads_by_name_and_keeps_every_address(tmp_path):
     assert sub[0].startswith("deduct_byte_at:") and "sub $CA12" in sub[0]
     assert [ln for ln in sub if ln.startswith("L_")] == ["L_CA27:", "L_CA2F:"]   # the two branch targets only
     body = [ln for ln in sub[1:] if not ln.startswith("L_")]
-    addrs = [re.search(r"; \$([0-9A-F]{4})", ln).group(1) for ln in body]
+    addrs = [re.match(r"^    ([0-9A-F]{4}): ", ln).group(1) for ln in body]
     assert addrs[0] == "CA17" and addrs[-1] == "CA30" and len(addrs) == 18        # every instruction, in order
     assert any("JUMPF_abs" in ln and "L_CA27" in ln for ln in body)
     assert "> $CA27" not in text and not re.search(r"^ [ >]\$", text, re.M)       # no address-led lines

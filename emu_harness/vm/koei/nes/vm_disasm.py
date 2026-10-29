@@ -278,6 +278,34 @@ def emit_sub(out, stub, end, mem, labels):
     return final_pc > end or (final_pc < end and last_op not in UNCOND_TERMINATORS)
 
 
+def emit_sub_labeled(out, stub, end, mem, labels):
+    """The reading view of one sub, laid out like Mappy's labeled listing: the routine's name and the
+    `L_XXXX:` branch targets flush left, every instruction indented under them as `ADDR: bytes  mnemonic
+    operand`, so labels are easy to find and a C line's `// $XXXX` still greps to its line. Same walk as
+    emit_sub (one source, two layouts); emit_sub stays the decompiler's input (parse_listing reads it)."""
+    body = stub + 5
+    instrs, final_pc, targets = walk_sub(mem, body, end, labels)
+    name = labels.get(stub) or f"sub_{stub:04X}"
+    out.append(f"{name}:".ljust(48) + f"; sub ${stub:04X}, frame_off {frame_off(mem, stub):+d}")
+    for ins in instrs:
+        if ins["addr"] in targets:
+            out.append(f"L_{ins['addr']:04X}:")
+        bs = ins["bytes"] if len(ins["bytes"]) <= 6 else ins["bytes"][:6]
+        byts = " ".join(f"{b:02X}" for b in bs) + (" ..." if len(ins["bytes"]) > 6 else "")
+        operand = ins["operand"]
+        if ins["op"] in ABS_BRANCH_OPS and len(ins["bytes"]) == 3:
+            tgt = ins["bytes"][1] | (ins["bytes"][2] << 8)
+            if tgt in targets:
+                operand = f"L_{tgt:04X}"           # in-sub jumps name their label, not a bare address
+        line = f"    {ins['addr']:04X}: {byts:<20} {ins['mnem']:<22} {operand}"
+        if ins["comment"]:
+            line = f"{line.rstrip():<74} ; {ins['comment']}"
+        out.append(line.rstrip())
+    out.append("")
+    last_op = instrs[-1]["op"] if instrs else None
+    return final_pc > end or (final_pc < end and last_op not in UNCOND_TERMINATORS)
+
+
 def sub_at(stubs, base, size, addr):
     """The stub whose span [body, next_stub) contains `addr` (accepts the stub addr, the
     body addr, or any interior instruction address). Returns (stub, end) or (None, None)."""
@@ -288,9 +316,18 @@ def sub_at(stubs, base, size, addr):
     return None, None
 
 
-def render(bank, stubs, mem, labels, n_labels):
+def render(bank, stubs, mem, labels, n_labels, labeled=False):
+    """labeled=False: the decompiler's input (address-led lines, `>` at branch targets).
+    labeled=True: the reading view (emit_sub_labeled)."""
     base, size = bank_range(bank)
     out = []
+    if labeled:
+        out.append(f"; VM bytecode, bank {bank}: {len(stubs)} subs, labeled view (labels flush left, instructions indented)")
+        out.append(f"; ROM {ROM_NAME}; opcode lengths from nobunaga_vm.OPCODE_INFO")
+        out.append("")
+        bounds = stubs + [base + size]
+        misaligned = sum(emit_sub_labeled(out, stub, bounds[i + 1], mem, labels) for i, stub in enumerate(stubs))
+        return "\n".join(out) + "\n", misaligned
     out.append("VM bytecode disassembly")
     out.append(f"  ROM:          {ROM_NAME}")
     out.append(f"  mode:         bulk dump of bank {bank}")
