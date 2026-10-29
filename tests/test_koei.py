@@ -537,3 +537,19 @@ def test_an_indirect_store_keeps_both_arms_of_its_merge(tmp_path):
     sub = sub[:sub.index("\n}\n")]
     assert "phi_val_ca2f = 0;" in sub, sub                          # the clamp arm ($CA23 LOADL_qimm 0)
     assert "*(byte*)(stat_ptr) = phi_val_ca2f;" in sub, sub         # the store takes whichever arm ran
+
+
+def test_record_pointer_fields_need_evidence():
+    """A variable the sub reads as a record (`V->field`, or assigned a whole `&table[E]`) renders its
+    +0 field, its other derefs and its field addresses as fields; a bare word pointer never does."""
+    from emu_harness.vm.koei.nes.vm_decompile import annotate_record_pointer_fields
+    F = {0: "gold", 2: "debt", 4: "town", 6: "rice"}
+    rec = [(1, 1, "x = (fief->debt + 1);"), (2, 1, "*(word*)(fief) = (*(word*)(fief) - 5);"),
+           (3, 1, "grow((gain << 1), (fief + 4));"), (4, 1, "y = *(word*)((fief + 6));")]
+    out = [t for _a, _i, t in annotate_record_pointer_fields(rec, F)]
+    assert out == ["x = (fief->debt + 1);", "fief->gold = (fief->gold - 5);",
+                   "grow((gain << 1), &fief->town);", "y = fief->rice;"]
+    whole = [(1, 1, "p = &province_table_live[sel];"), (2, 1, "q = *(word*)(p);")]
+    assert annotate_record_pointer_fields(whole, F, "province_table_live")[1][2] == "q = p->gold;"
+    plain = [(1, 1, "*(word*)(x_ptr) = (*(word*)(x_ptr) + 1);"), (2, 1, "n = (x_ptr + 2);")]
+    assert annotate_record_pointer_fields(plain, F, "province_table_live") == plain     # no evidence

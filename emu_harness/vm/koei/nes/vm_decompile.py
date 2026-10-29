@@ -376,6 +376,39 @@ def set_schema(game):
     _EXTOP_OVERRIDE = _EXTOP_OVERRIDES_NA1 if game == "na1" else {}
 
 
+def annotate_record_pointer_fields(lines, field_map, table=None):
+    """Whole-sub pass for a variable the sub already reads as a record (`V->field`, a name in
+    field_map): its other field forms render as fields too. `*(word*)(V)` -> V->field0 (the +0
+    field prints no offset, so annotate_field_access never sees it), `*(word*)((V + K))` -> V->fieldK
+    (a local with several assignments, which annotate_record_locals skips), and a field ADDRESS
+    `(V + K)` -> &V->fieldK (a pointer argument). Evidence-gated: a bare word pointer such as x_ptr
+    never reads as `x_ptr->field`, so it is never touched. NA1 (2026-10-29): `*(word*)(fief)` was
+    gold in 40 places, `(fief + 4)` an argument &fief->town. Second evidence: an assignment of a whole
+    record, `V = &table[E];` (no field), which annotate_record_locals skips when V has several."""
+    names = set(field_map.values())
+    recs = set()
+    whole = re.compile(rf'^\s*([A-Za-z_]\w*) = &{re.escape(table)}\[[^;]*\];\s*$') if table else None
+    for _a, _i, t in lines:
+        recs |= {v for v, f in re.findall(r'\b([A-Za-z_]\w*)->(\w+)', t) if f in names}
+        if whole and (m := whole.match(t)) and "." not in t.split("]", 1)[-1]:
+            recs.add(m.group(1))
+    if not recs:
+        return lines
+    alt = "|".join(sorted(map(re.escape, recs), key=len, reverse=True))
+    f0 = field_map.get(0)
+    deref_k = re.compile(rf'\*\(word\*\)\(\(({alt}) \+ (\d+)\)\)')
+    deref_0 = re.compile(rf'\*\(word\*\)\(({alt})\)')
+    addr_k = re.compile(rf'(?<![\w>.])\(({alt}) \+ (\d+)\)')
+    out = []
+    for a, i, t in lines:
+        t = deref_k.sub(lambda m: f"{m.group(1)}->{field_map[int(m.group(2))]}" if int(m.group(2)) in field_map else m.group(0), t)
+        if f0:
+            t = deref_0.sub(lambda m: f"{m.group(1)}->{f0}", t)
+        t = addr_k.sub(lambda m: f"&{m.group(1)}->{field_map[int(m.group(2))]}" if int(m.group(2)) in field_map else m.group(0), t)
+        out.append((a, i, t))
+    return out
+
+
 def annotate_field_access(expr, record_var="arg1", field_map=PROV_FIELDS):
     """Rewrite *(word*)((record + N)) as record->fieldname for known offsets."""
     # Match *(word*)((record_var + N))
@@ -2031,7 +2064,11 @@ def decompile(filepath, sub_addr, labels=None, var_names=None, collect=None):
         # once rendered, so running first would let it rewrite `!((x > 0))` that it never touched.
         text = annotate_record_access(text, labels)
         annotated.append((addr, indent, text))
-    for addr, indent, text in annotate_record_locals(annotated, labels=labels):     # needs the whole sub
+    annotated = annotate_record_locals(annotated, labels=labels)                     # needs the whole sub
+    if ARG_FIELDS:
+        _prov = next((r for r in _RECORDS if r["fields"] == ARG_FIELDS), None)
+        annotated = annotate_record_pointer_fields(annotated, ARG_FIELDS, _table_name(labels, _prov) if _prov else None)
+    for addr, indent, text in annotated:
         text = apply_var_names(text, var_names)   # var-walk: LAST, so arg1->output -> fief->output
         if text.endswith(':') and not text.startswith('//'):
             # `L_XXXX:` goto labels sit at column 0 (existing convention); Phase-3 inlined
