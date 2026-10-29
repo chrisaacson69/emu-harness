@@ -519,3 +519,21 @@ def test_labeled_vm_listing_reads_by_name_and_keeps_every_address(tmp_path):
     assert "> $CA27" not in text and not re.search(r"^ [ >]\$", text, re.M)       # no address-led lines
     p = plain.read_text(encoding="utf-8")
     assert "; sub $CA12" in p and " >$CA27" in p                                  # decompiler input unchanged
+
+
+def test_an_indirect_store_keeps_both_arms_of_its_merge(tmp_path):
+    """A merge whose first op is an indirect store (BYTE_POPSTORE / POPSTORE through a pointer pushed
+    before the branch) consumes regA, so each arm's value must reach it. deduct_byte_at ($CA12) is
+    `*p = (*p < amt) ? 0 : *p - amt`; the C used to keep only the subtract and read as a wrapping byte."""
+    import pytest
+    from emu_harness.vm.koei.nes import titles
+    if not titles.game_cfg("na1")["_rom"].exists():
+        pytest.skip("na1-decompiler ROM not present")
+    asm, c = tmp_path / "b.asm", tmp_path / "b.c"
+    titles.disasm("na1", 15, str(asm))
+    titles.decompile("na1", 15, str(asm), str(c))
+    text = c.read_text(encoding="utf-8")
+    sub = text[text.index("sub $CA12\n"):]
+    sub = sub[:sub.index("\n}\n")]
+    assert "phi_val_ca2f = 0;" in sub, sub                          # the clamp arm ($CA23 LOADL_qimm 0)
+    assert "*(byte*)(stat_ptr) = phi_val_ca2f;" in sub, sub         # the store takes whichever arm ran

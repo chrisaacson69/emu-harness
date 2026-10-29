@@ -860,6 +860,12 @@ _BRANCH_REGA = {'branch_z_abs', 'branch_nz_abs'}
 # this. The decoder side is consumer-agnostic (it sets state.regA to the temp; the deref then
 # reads `*(phi_val)`), so allowing it here is the whole fix. (bug 1.2, 2026-06-11.)
 _DEREF_REGA = {'loadA_ind_word'}
+# An INDIRECT store (POPSTORE / BYTE_POPSTORE: pop a pointer pushed before the branch, store regA
+# through it) consumes regA-in the same way. Without it the merge kept only the fall pred's value:
+# deduct_byte_at ($CA12) printed `*p = *p - amt` and lost its `< amt -> 0` arm, so the C read as a
+# wrapping subtract where the ROM clamps at 0 (5 NA1 merges, 2026-10-29). The pushed pointer is the
+# same on every path, so only regA needs the phi.
+_STORE_IND_REGA = {'storeA_ind_byte', 'storeA_ind_word'}
 
 
 def value_merge_phis(instructions):
@@ -920,7 +926,7 @@ def value_merge_phis(instructions):
         if M in folded_merges:                                     # handled by the ternary fold
             continue
         blk = bmap.get(M, [])
-        if not blk or blk[0]['mnemonic'] not in (_STORE_REGA | _BRANCH_REGA | _DEREF_REGA):
+        if not blk or blk[0]['mnemonic'] not in (_STORE_REGA | _STORE_IND_REGA | _BRANCH_REGA | _DEREF_REGA):
             continue                                               # consumer must read regA first
         ps = [p for p in preds.get(M, ()) if p is not EXIT]
         if len(ps) < 2:
