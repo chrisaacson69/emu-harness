@@ -160,7 +160,7 @@ def test_record_field_maps_come_from_the_profiles():
     VC.set_schema("na2")
     assert VC.CPP_VAR == "current_province_ptr" and VC.ARG_FIELDS == {20: "liege", 43: "debt"}
     VC.set_schema("na1")
-    assert VC.CPP_FIELDS[24] == "header" and VC.ARG_FIELDS is VC.CPP_FIELDS
+    assert VC.CPP_FIELDS[24] == "stat_cap" and VC.ARG_FIELDS is VC.CPP_FIELDS
 
 
 def test_na1_assets_match_the_live_ppu_capture():
@@ -493,3 +493,29 @@ def test_a_stored_call_is_read_back_by_name_not_called_again(tmp_path):
     roll = roll[:roll.index("\n}\n")]                          # prompt_roll_stat_value
     assert roll.count("rng_mod(50)") == 1, roll                # one CALL_abs_imm1 $CA52 at $8615
     assert "draw_message(msg_fmt__3d, rolled_value)" in roll, roll
+
+
+def test_labeled_vm_listing_reads_by_name_and_keeps_every_address(tmp_path):
+    """The reading view of the VM listing: a routine's name opens its block, `L_XXXX:` appears only where
+    something branches, in-routine jumps name their label, and every instruction keeps its address as a
+    right-margin comment (the C's `// $XXXX` tags grep to it). The decompiler's input is a separate file and
+    does not change."""
+    import pytest, re
+    from emu_harness.vm.koei.nes import titles
+    if not titles.game_cfg("na1")["_rom"].exists():
+        pytest.skip("na1-decompiler ROM not present")
+    plain, lab = tmp_path / "b.asm", tmp_path / "b_labeled.asm"
+    titles.disasm("na1", 15, str(plain))
+    titles.disasm("na1", 15, str(lab), labeled=True)
+    text = lab.read_text(encoding="utf-8")
+    sub = text[text.index("deduct_byte_at:"):]
+    sub = sub[:sub.index("\n\n")].splitlines()
+    assert sub[0].startswith("deduct_byte_at:") and "sub $CA12" in sub[0]
+    assert [ln for ln in sub if ln.startswith("L_")] == ["L_CA27:", "L_CA2F:"]   # the two branch targets only
+    body = [ln for ln in sub[1:] if not ln.startswith("L_")]
+    addrs = [re.search(r"; \$([0-9A-F]{4})", ln).group(1) for ln in body]
+    assert addrs[0] == "CA17" and addrs[-1] == "CA30" and len(addrs) == 18        # every instruction, in order
+    assert any("JUMPF_abs" in ln and "L_CA27" in ln for ln in body)
+    assert "> $CA27" not in text and not re.search(r"^ [ >]\$", text, re.M)       # no address-led lines
+    p = plain.read_text(encoding="utf-8")
+    assert "; sub $CA12" in p and " >$CA27" in p                                  # decompiler input unchanged
