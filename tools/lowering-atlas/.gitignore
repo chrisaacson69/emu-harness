@@ -1,0 +1,5 @@
+# GCC dump artifacts — regenerate with tools/compile-dumps.py
+build/
+*.s
+*.cfg
+*.o

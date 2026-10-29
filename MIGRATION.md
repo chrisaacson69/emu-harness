@@ -104,11 +104,12 @@ The **oracle** is how the fold is proven to change nothing.
 | Q | Trace decoding | na1 `combat-trace-decode`, `extract-chr-from-trace`, `title-nametable` · emu-harness `trace_diff` | `machines/nes/trace` | identical reconstructions |
 | R | **Static RE of native (non-VM) games** | mappy `trace_codegraph`, `static_expand`, `jump_tables`, `pointer_tables`, `stored_pointers`, `label_leaves`, `obj_record` | `cpu/m6502` + `passes/*` | Mappy's committed tables reproduce |
 
-**Stays in the game repo (game-specific, by design):** `na1sim/`, na1's site/wiki builders and
-`lowering-atlas/`, per-fief renders/analyses, `econ_sim`, ROTK `atlas/`, the AeroBiz
+**Stays in the game repo (game-specific, by design):** `na1sim/`, na1's site/wiki builders, per-fief renders/analyses, `econ_sim`, ROTK `atlas/`, the AeroBiz
 `recon_checks/`, generated `data/*/enums.py`, Elite's `import_labels` / `verify_rom`, mappy's
 `mappy_search` adapter, game Lua probes, and every `attic/` probe. A game repo becomes
 **a profile + adapters + findings**.
+(`lowering-atlas/` was listed here; it moved to `tools/lowering-atlas/` on 2026-10-29: the forward
+catalog of structured-C lowerings is not NA1's, and its checking role is cfg_gate's `lower_goto_cfg`.)
 
 ## Proposed layout (fills in as moves land; no empty scaffolding)
 
