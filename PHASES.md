@@ -264,13 +264,15 @@ cannot drift); a site builder that copies but never prunes keeps retired files p
 ## Project layout
 
 Every title repo has the same shape, so the harness, the walks and a reader find things in the same
-place (adopted 2026-10-29; NA1 moved to it the same day, Mappy and the KOEI siblings move at their revisits):
+place (adopted 2026-10-29; NA1 and Mappy moved to it the same day, the KOEI siblings move at their revisits):
 
 ```
 <repo>/
   README.md  re-roadmap.toml  mesen-labels.toml (or labels.toml)  <title>.mlb
-  source/    the generated ladder: asm, labelled asm, VM listing, C
-  docs/      hand-written pages: chapters, appendices, command pages (the doc gate's scope)
+  source/    the generated ladder: asm, labelled asm, VM listing, C; a native title's discover
+             tables (coverage maps, routine and jump tables) in source/0-discover/
+  docs/      hand-written pages: chapters, appendices, command pages (the doc gate's scope);
+             none where the chapters live in another repo (Mappy's are in game-annotation)
   assets/    committed renders; sound/ gitignored (the title's music)
   tools/     the title's tools and adapters (sound_engine, sound_verify, ...)
   site/      a site generator's templates and config, for a title that publishes one
@@ -278,7 +280,9 @@ place (adopted 2026-10-29; NA1 moved to it the same day, Mappy and the KOEI sibl
   .github/workflows/pages.yml   a published site is built by Actions, never committed
 ```
 
-Rules: a tool resolves paths from its own file, never the working directory; a site is a build output
+Rules: a tool resolves paths from its own file, never the working directory (a title without a
+profile keeps every location, the ROM's name and hash among them, in one `tools/paths.py`, so a
+layout change is an edit to one file: Mappy); a site is a build output
 (a committed copy duplicates the assets and keeps retired files published); the ROM, savestates and
 rendered audio are never committed.
 
@@ -287,7 +291,8 @@ gitignored). A title names its ROM by file name and SHA-1 of the whole file (in 
 `rom_sha1` in `games.toml` for the KOEI NES titles), and its tools ask for it rather than build a path:
 `emu_harness.roms.find_rom` looks in the store, then the title repo (the fallback while titles move),
 and a wrong hash is an error wherever the file is. Mesen auto-loads a `.mlb` beside the ROM it opens,
-so a title's label exporter copies its committed `.mlb` into the store too. NA1 was first (2026-10-29).
+so a title's label exporter copies its committed `.mlb` into the store too. NA1 was first (2026-10-29),
+through its profile; Mappy second the same day, the first without one (`find_rom` from `tools/paths.py`).
 ---
 
 ## Status values

@@ -26,6 +26,7 @@ from emu_harness.backends.mesen import Mesen, load_config
 from emu_harness.cpu.m6502 import disasm as D
 from emu_harness.cpu.m6502.descent import Window, descend, verdicts
 from emu_harness.machines.nes import nes_disasm6
+from emu_harness.roms import find_rom
 
 ROOT = Path(__file__).resolve().parents[2]          # the folder the sibling repos live in
 SCRATCH = Path(__file__).resolve().parents[1] / "_scratch"
@@ -152,15 +153,15 @@ def run_scores():
         ("descent, cold + nes-disasm6", score(fill(cold, nd6), truth, cdl))])
 
     M = ROOT / "mappy-decompiler"
-    p = M / "Mappy (Japan).nes"; rom = p.read_bytes(); prg = prg_of(rom); cdl = list((SCRATCH / "mappy.cdl").read_bytes())
+    p = find_rom("Mappy (Japan).nes", fallback=[M]); rom = p.read_bytes(); prg = prg_of(rom); cdl = list((SCRATCH / "mappy.cdl").read_bytes())
     nd6, cold = nes_disasm6.verdicts(p, tool), cold_descent(prg, 0, 0xC000, 0x4000, mirrors=(0x8000,))
     rows = [("linear sweep (ours)", score(linear(rom), cdl=cdl)),
             ("nes-disasm6", score(nd6, cdl=cdl)),
             ("descent, cold (vectors)", score(cold, cdl=cdl)),
             ("descent, cold + nes-disasm6", score(fill(cold, nd6), cdl=cdl))]
     for name, f in (("mappy trace (Python 6502)", "coverage.bin"), ("mappy static_expand", "coverage_static.bin")):
-        if (M / f).exists():                       # local outputs of the Mappy pipeline
-            v = from_bitmap((M / f).read_bytes())
+        if (M / "source/0-discover" / f).exists():  # local outputs of the Mappy pipeline
+            v = from_bitmap((M / "source/0-discover" / f).read_bytes())
             rows += [(name, score(v, cdl=cdl)), (name + " + nes-disasm6", score(fill(v, nd6), cdl=cdl))]
     table("Mappy (NROM, 16K): CPU log of the attract demo", rows)
 
