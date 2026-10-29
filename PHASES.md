@@ -225,7 +225,7 @@ palette copies, one wrong); the oracle is the live PPU. Sound: never decode a ti
 play it, run its engine, so a title owes only how the game drives it (Mappy: a trigger byte; NA1: a
 bytecode request plus a native NMI tick); hold (how long the game requests) and loop (the stream
 repeats by itself) are different facts; a stand-in the VM uses for a syscall is not the handler (NA1's
-`audio_control` stub never armed a voice); rendered audio stays out of public repos.
+`audio_control` stub never armed a voice); rendered audio stays out of public repos. Assets come in three families: pictures, sound, and **data** (the game's records, pulled from ROM or captured live from RAM); a capture probe is an asset tool to move onto the library (`machines.nes.live`, `machines.nes.trace`, `passes/records`), not a one-off to retire. Overworld maps the game shows as overlapping pages can be stitched into one; a map that shows part of a territory cannot.
 
 ## 8. Live verification (`live`)
 
