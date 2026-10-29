@@ -1007,6 +1007,75 @@ def annotate_bank_call(text):
     return "".join(out)
 
 
+# Per-title readers of a pointer into ANOTHER PRG bank: (fn, bank_arg, ptr_arg), 0-based argument
+# indices, set by titles from games.toml `banked_data`. A $8000-$BFFF constant names a byte only
+# together with its bank, and push-time naming (_imm_word_repr) knows only the code's own bank:
+# NA1's bank-15 code copying bank-4 map data printed whatever bank 15's section held at that address.
+BANKED_DATA = ()
+
+_WINDOW_TOKEN = re.compile(r'\b(?:0x([89AB][0-9A-Fa-f]{3})|([A-Za-z_]\w*))\b(?!\s*\()')
+_VAR = r'[A-Za-z_]\w*|\*\((?:word|byte)\*\)\(fp [-+] \d+\)'   # a name, or a frame slot before var names
+_LONE_NAME = re.compile(r'\s*(' + _VAR + r')\s*')
+_ASSIGN = re.compile(r'^(\s*(' + _VAR + r')\s*=(?!=))(.*)$')
+
+
+def _banked_calls(text):
+    """[(bank or None, ptr_start, ptr_end)] for every BANKED_DATA call in `text`."""
+    out = []
+    for fn, bank_arg, ptr_arg in BANKED_DATA:
+        for m in re.finditer(r'(?<![\w])' + re.escape(fn) + r'\(', text):
+            k, depth = m.end(), 1
+            while k < len(text) and depth:
+                depth += (text[k] == '(') - (text[k] == ')')
+                k += 1
+            if depth:
+                continue
+            spans, start = [], m.end()
+            for a in _split_top_level(text[m.end():k - 1]):
+                spans.append((start, start + len(a)))
+                start += len(a) + 1
+            if max(bank_arg, ptr_arg) < len(spans):
+                out.append((_as_int(text[slice(*spans[bank_arg])]), *spans[ptr_arg]))
+    return sorted(out, key=lambda c: -c[1])        # right to left, so earlier spans stay valid
+
+
+def _rename_window(expr, bank, by_name):
+    """Each switchable-window constant in `expr` -- a literal, or the name the code's own bank gave
+    it (`by_name`: name -> addr) -- named through BANK_CALL_MAP[(bank, addr)]; hex when `bank` has no
+    label there, since the code bank's name would name another bank's bytes. Calls are left alone."""
+    def one(m):
+        a = int(m.group(1), 16) if m.group(1) else by_name.get(m.group(2))
+        if a is None:
+            return m.group(0)
+        return _label_name(BANK_CALL_MAP, (bank, a)) or f"0x{a:04X}"
+    return _WINDOW_TOKEN.sub(one, expr)
+
+
+def annotate_banked_pointers(lines, labels):
+    """[(addr, indent, text)] -> the same, with every BANKED_DATA call's pointer argument named in
+    the bank its bank argument selects. A pointer passed through a local (`p = 0x8D5C + i; f(4, p)`)
+    renames that local's assignments in the sub, if every such call passing it agrees on the bank."""
+    if not BANKED_DATA:
+        return lines
+    by_name = {_label_name(labels, a): a for a in (labels or {}) if 0x8000 <= a < 0xC000}
+    by_name.pop(None, None)
+    local_bank, out = {}, []
+    for addr, indent, text in lines:
+        for bank, s, e in _banked_calls(text):
+            lone = _LONE_NAME.fullmatch(text[s:e])
+            if lone and lone.group(1) not in by_name:
+                v = lone.group(1)
+                local_bank[v] = bank if local_bank.get(v, bank) == bank else None
+            elif bank is not None:
+                text = text[:s] + _rename_window(text[s:e], bank, by_name) + text[e:]
+        out.append((addr, indent, text))
+    for i, (addr, indent, text) in enumerate(out):
+        m = _ASSIGN.match(text)
+        if m and local_bank.get(m.group(2)) is not None:
+            out[i] = (addr, indent, m.group(1) + _rename_window(m.group(3), local_bank[m.group(2)], by_name))
+    return out
+
+
 def _mem_name(operand, addr, labels):
     """Name an absolute-memory operand. Precedence: the disasm's own inline
     `(label)` -> the toml labels dict (covers [ram]/SRAM and data addresses, since
@@ -2065,6 +2134,7 @@ def decompile(filepath, sub_addr, labels=None, var_names=None, collect=None):
         text = annotate_record_access(text, labels)
         annotated.append((addr, indent, text))
     annotated = annotate_record_locals(annotated, labels=labels)                     # needs the whole sub
+    annotated = annotate_banked_pointers(annotated, labels)                          # so does this
     if ARG_FIELDS:
         _prov = next((r for r in _RECORDS if r["fields"] == ARG_FIELDS), None)
         annotated = annotate_record_pointer_fields(annotated, ARG_FIELDS, _table_name(labels, _prov) if _prov else None)

@@ -23,6 +23,11 @@ handler_hi     = 0xF126
 syscall_kind   = "jsr3"          # BIOS dispatch: JSR into a 3-byte JMP table
 syscall_table  = 0xC173
 code_banks     = [0, 1, 2, 10, 14, 15]
+banked_data    = [                    # readers of a pointer into another bank (0-based args): vm_decompile names it there
+    { fn = "copy_from_bank",        bank_arg = 0, ptr_arg = 1 },   # (bank, src, dst, len)
+    { fn = "ppu_upload_block_wrap", bank_arg = 0, ptr_arg = 1 },   # (bank, src, ppu_dst, tiles)
+    { fn = "ppu_copy_rect_wrap",    bank_arg = 5, ptr_arg = 4 },   # (x0, y0, x1, y1, src, bank)
+]
 
 [ro3k]
 title          = "Romance of the Three Kingdoms"

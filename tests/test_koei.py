@@ -415,6 +415,26 @@ def test_record_pointer_calls_render_as_arrow_fields():
     assert A("x = *(word*)((dr(k) + 4));") == "x = *(word*)(&dr(k)->charisma);"
 
 
+def test_banked_pointers_are_named_in_the_bank_their_reader_is_given(monkeypatch):
+    """games.toml `banked_data`: a $8000-$BFFF pointer passed to a banked reader is named in the bank
+    that reader's bank argument selects, inline or through a local, never by the code's own bank.
+    NA1's bank-15 code printed bank 15's label for bank-4 map data until 2026-10-29."""
+    from emu_harness.vm.koei.nes import vm_decompile as VC
+    monkeypatch.setattr(VC, "BANKED_DATA", (("copy_from_bank", 0, 1), ("rect", 5, 4)))
+    monkeypatch.setattr(VC, "BANK_CALL_MAP", {(4, 0x8D5C): "tilemaps", (8, 0xBBD0): "descriptors"})
+    code_bank = {0x8D5C: ("code_bank_string", "")}           # what the code's own section held there
+    A = lambda *texts: [t for _a, _i, t in VC.annotate_banked_pointers([(0, 1, t) for t in texts], code_bank)]
+    assert A("rect(2, 4, 29, 19, ((s * 0x01C0) + 0x8D5C), 4);") == ["rect(2, 4, 29, 19, ((s * 0x01C0) + tilemaps), 4);"]
+    assert A("copy_from_bank(4, (i + code_bank_string), &b, 4);") == ["copy_from_bank(4, (i + tilemaps), &b, 4);"]
+    assert A("*(word*)(fp - 40) = ((k << 2) + 0xBBD0);", "copy_from_bank(8, *(word*)(fp - 40), &b, 4);") \
+        == ["*(word*)(fp - 40) = ((k << 2) + descriptors);", "copy_from_bank(8, *(word*)(fp - 40), &b, 4);"]
+    # planted: the reader's bank is another bank, so the code bank's name is wrong there -> hex, not either name
+    assert A("copy_from_bank(5, (i + code_bank_string), &b, 4);") == ["copy_from_bank(5, (i + 0x8D5C), &b, 4);"]
+    # a local passed to readers of two different banks is left alone; a non-constant bank names nothing
+    keep = ["p = (k + 0x8D5C);", "copy_from_bank(4, p, &b, 1);", "copy_from_bank(8, p, &b, 1);", "copy_from_bank(n, 0x8D5C, &b, 1);"]
+    assert A(*keep) == keep
+
+
 def test_batch_decompile_renders_the_var_walk_names(tmp_path):
     """titles.decompile (the path that regenerates a title's source/) must apply the registry's
     [vars.bankN."0xADDR"] frame-slot names. It did not from the engine's graduation until 2026-10-28:

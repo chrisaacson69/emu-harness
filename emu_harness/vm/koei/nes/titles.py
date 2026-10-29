@@ -123,6 +123,18 @@ def bank_scoped_labels(cfg, bank):
     return labs
 
 
+def banked_data(cfg):
+    """games.toml `banked_data` -> ((fn, bank_arg, ptr_arg), ...). Each fn must be a registry name:
+    the decompiler matches it in the printed C, so a renamed reader would silently stop matching."""
+    specs = cfg.get("banked_data", [])
+    if specs:
+        names = set(re.findall(r'name\s*=\s*"([^"]+)"', cfg["_labels"].read_text(encoding="utf-8")))
+        missing = [d["fn"] for d in specs if d["fn"] not in names]
+        if missing:
+            raise ValueError(f"banked_data names no registry label: {', '.join(missing)}")
+    return tuple((d["fn"], d["bank_arg"], d["ptr_arg"]) for d in specs)
+
+
 def build_bank_call_map(cfg):
     """{(bank, addr) -> name} from every [prg.bankN] section. Lets the decompiler resolve the
     cross-bank trampoline call_in_bank_dcd1(window, bankval, addr, …) to the real target name
@@ -270,6 +282,7 @@ def decompiler_for(name, bank, raw=False):
         VC.SYSCALL_TABLE = sysmap                     # override the hardcoded NA1 default
     VC.BANK_CALL_MAP = build_bank_call_map(cfg)        # resolve cross-bank trampoline targets
     VC.BANKCALL_NEEDLE = cfg.get("bankcall_fn", "call_in_bank_dcd1") + "("   # per-title trampoline name
+    VC.BANKED_DATA = banked_data(cfg)                  # name a pointer by the bank its reader is given
     _et = build_ext_op_table(cfg)                       # per-title ext-op table (was hardcoded NA2 -> wrong for rot3k2)
     if _et:
         VC.EXT_OP_TABLE = _et
