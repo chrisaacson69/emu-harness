@@ -291,7 +291,11 @@ gitignored). A title names its ROM by file name and SHA-1 of the whole file (in 
 `rom_sha1` in `games.toml` for the KOEI NES titles), and its tools ask for it rather than build a path:
 `emu_harness.roms.find_rom` looks in the store, then the title repo (the fallback while titles move),
 and a wrong hash is an error wherever the file is. Mesen auto-loads a `.mlb` beside the ROM it opens,
-so a title's label exporter copies its committed `.mlb` into the store too. NA1 was first (2026-10-29),
+so a title's label exporter copies its committed `.mlb` into the store too. The committed `.mlb` is the
+checked artifact (regenerated from the registry, reviewed in git, read by doccheck); the store copy is an
+install, never a source. Mesen can write labels back to it, which desyncs it: live edits there are the
+user's, and re-running the exporter overwrites them. A name worth keeping goes into the registry (Chris,
+2026-10-29). NA1 was first (2026-10-29),
 through its profile; Mappy second the same day, the first without one (`find_rom` from `tools/paths.py`).
 ---
 
