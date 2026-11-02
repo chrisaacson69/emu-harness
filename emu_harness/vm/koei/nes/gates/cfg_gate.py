@@ -10,13 +10,14 @@ Runs the whole 4-bank codebase through two checks:
       Plus: no unrecognised control-shaped mnemonics slipped through.
 
   (2) STRUCTURED EQUIVALENCE (informational in Phase 0):
-      lower_c_to_cfg(STRUCTURED) vs bytecode_cfg. Reports how many subs match exactly
-      and characterises the residue. structure_lines already performs destructive folds
-      (early-return merges a return block; empty-arm if/else collapses a diamond) that
-      change the block partition while preserving behaviour — so the EXACT block gate is
-      deliberately too strict here. The precise equivalence relation that licenses Phase 1+
-      folds (contraction of pure-routing blocks, return-value-carrying EXIT edges,
-      true/false edge labels to catch condition inversion) is the next decision to lock.
+      The structured C the decompiler emits, per sub, by the relation that matches its owner:
+      DREAM via the AST-native reorder-tolerant `dream_equivalent_ast`, the region-reducer
+      fallback via `structured_equivalent` (contraction of pure-routing blocks, return-value
+      EXIT edges, true/false edge labels), the honest goto form trivially. This gates the
+      committed bank_NN.c.
+
+  (3) FORMULA OVERRIDES: a sub printed as a formula has no CFG; its model is run against the
+      ROM's own sub over an edge grid.
 
 Usage:
   py -3 tools/vm-cfg-gate.py [--banks 0,1,2,15] [--verbose] [--show-structured]
@@ -37,13 +38,13 @@ from emu_harness.vm.koei.nes.cli import decompile_all
 CODE_BANKS = [0, 1, 2, 10, 14, 15]
 
 
-def _hybrid_equiv(collect, leaders):
-    """Per-sub equivalence for the DREAM-hybrid canonical output. Each sub is validated with
-    the relation that matches its OWNER (recorded by decompile() as collect['structurer']):
-    DREAM-owned subs via the AST-native reorder-tolerant `dream_equivalent_ast` (re-deriving
-    the AST from the raw witness exactly as the emit did — the address-anchored gate would
-    falsely reject DREAM's reorder-inverted merges); V2-fallback subs via `structured_equivalent`;
-    raw passthrough is trivially the witness. Returns (ok, n_raw, n_str)."""
+def _owner_equiv(collect, leaders):
+    """Per-sub equivalence of the emitted structured C. Each sub is validated with the relation
+    that matches its OWNER (recorded by decompile() as collect['structurer']): DREAM-owned subs
+    via the AST-native reorder-tolerant `dream_equivalent_ast` (re-deriving the AST from the raw
+    witness exactly as the emit did — the address-anchored gate would falsely reject DREAM's
+    reorder-inverted merges); region-reducer subs via `structured_equivalent`; the honest goto
+    form is trivially the witness. Returns (ok, n_raw, n_str)."""
     who = collect.get('structurer')
     raw, instrs = collect['raw'], collect['instructions']
     if who == 'dream':
@@ -57,7 +58,7 @@ def _hybrid_equiv(collect, leaders):
             return False, None, None
     if who == 'raw':
         return True, None, None
-    # V2-fallback (or any non-DREAM run): the address-anchored gate is correct.
+    # The region-reducer fallback: the address-anchored gate is correct.
     return vm_cfg.structured_equivalent(raw, collect['structured'], leaders)
 
 
@@ -88,10 +89,11 @@ def override_value_check(stub, values=EDGE_VALUES):
     return bad
 
 
-def run(banks, verbose=False, show_structured=False, hybrid=False):
+def run(banks, verbose=False, show_structured=False):
     raw_fail = []        # lower(raw) != bytecode                    — HARD (witness faithful)
     struct_fail = []     # the GATED structured output != raw        — HARD (gating regression)
-    fellback = []        # subs where structure_lines was rejected -> honest goto (expected)
+    fellback = []        # subs where the reducer's fold was rejected -> honest goto (expected)
+    owners = {}          # structurer -> count (dream / reducer / raw)
     override_ok, override_fail = [], []   # formula overrides, witnessed by value against the ROM
     unknown_mn = []      # (bank, sub, addr, mnemonic) — unrecognised control op
     n_subs = 0
@@ -128,14 +130,11 @@ def run(banks, verbose=False, show_structured=False, hybrid=False):
                         print(f"\nRAW != bytecode  bank {bank} ${stub:04X}")
                         print("  bytecode:\n" + _fmt(bc))
                         print("  lower(raw):\n" + _fmt(cc_raw))
-                # The GATED output decompile actually emits must be CFG-equivalent. In hybrid
-                # (--dream) mode each sub is checked by its owner's relation; else the
-                # address-anchored gate validates the active single structurer (V1/V2).
-                if hybrid:
-                    ok, n_raw, n_str = _hybrid_equiv(collect, leaders)
-                else:
-                    ok, n_raw, n_str = vm_cfg.structured_equivalent(
-                        collect['raw'], collect['structured'], leaders)
+                # The GATED output decompile actually emits must be CFG-equivalent, each sub
+                # checked by its owner's relation.
+                who = collect.get('structurer')
+                owners[who] = owners.get(who, 0) + 1
+                ok, n_raw, n_str = _owner_equiv(collect, leaders)
                 if not ok:
                     struct_fail.append((bank, stub))
                     if show_structured:
@@ -154,8 +153,8 @@ def run(banks, verbose=False, show_structured=False, hybrid=False):
     print(f"  (2) gated structuring is CFG-preserving           : "
           f"{n_cfg - len(struct_fail)}/{n_cfg} pass"
           + ("" if not struct_fail else f"  — {len(struct_fail)} FAIL"))
-    print(f"      ({len(fellback)} subs fell back to honest goto — structure_lines was "
-          f"not CFG-preserving there)")
+    print(f"      owners: DREAM {owners.get('dream', 0)}, region reducer {owners.get('reducer', 0)}, "
+          f"honest goto {owners.get('raw', 0)} ({len(fellback)} of them a rejected reducer fold)")
     if n_ov:
         print(f"  (3) formula overrides == ROM by value (edge grid) : {len(override_ok)}/{n_ov} pass"
               + ("" if not override_fail else f"  — {len(override_fail)} FAIL"))
@@ -188,21 +187,10 @@ def main():
     ap.add_argument("--verbose", action="store_true", help="dump each raw-gate failure")
     ap.add_argument("--show-structured", action="store_true",
                     help="dump each gated-structured/raw difference (a gating regression)")
-    ap.add_argument("--v2", action="store_true",
-                    help="validate the V2 region reducer (vm_reduce) instead of the templates")
-    ap.add_argument("--dream", action="store_true",
-                    help="validate the CANONICAL DREAM-hybrid output (DREAM primary + V2 fallback): "
-                         "each sub checked by its owner's relation (DREAM via dream_equivalent_ast, "
-                         "V2 via structured_equivalent). This gates the actual committed bank_NN.c.")
     args = ap.parse_args()
-    if args.v2 and args.dream:
-        ap.error("--v2 and --dream are mutually exclusive structurer modes")
     banks = [int(b, 0) for b in args.banks.split(",") if b.strip()]
-    vm_decompile.STRUCTURE_V2 = args.v2
-    if args.dream:
-        vm_decompile.STRUCTURE_DREAM = True
-        vm_decompile.structure_dream = dream.dream_structure_gated
-    sys.exit(run(banks, args.verbose, args.show_structured, hybrid=args.dream))
+    vm_decompile.STRUCTURE = True
+    sys.exit(run(banks, args.verbose, args.show_structured))
 
 
 if __name__ == "__main__":

@@ -1033,7 +1033,7 @@ def natural_loop(u, h, cfg):
 
 
 # --- switch dispatch regions (Phase 3: inline the case BODIES) ------------------
-# The shared detector both the decompiler's structure_switches emit pass AND the gate's
+# The shared detector both the structurers' switch folds AND the gate's
 # lower_struct_cfg consume — same rule, so they can't disagree (the value_diamonds /
 # boolean_regions pattern). A switch is FOLDABLE (its case bodies can move inside the
 # braces) iff its dispatch region is SINGLE-ENTRY: every case-target block is dominated by
@@ -1180,7 +1180,7 @@ def _classify_stmt(text):
         return 'ifcontinue', None
     if re.match(r'return\b', t):
         return 'return', None
-    if re.match(r'if \(.+\) return\b', t):       # structure_lines early-return idiom
+    if re.match(r'if \(.+\) return\b', t):       # the early-return idiom
         return 'ifreturn', None
     return 'plain', None
 
@@ -1203,7 +1203,7 @@ _RE_CASE_LABEL  = re.compile(r'(?:case -?\d+|default):$')   # Phase-3 INLINED ca
 # guards compare equal. A branch condition is atomic here (the VM tests one regA value
 # per branch), so it is either a bare value or a single `LHS op RHS` comparison; the
 # only condition rewrites structuring performs are outer `!(...)` toggling and the
-# comparison-operator flips in invert_condition (`<`<->`>=`, `>`<->`<=`, `==`<->`!=`).
+# comparison-operator flips (`<`<->`>=`, `>`<->`<=`, `==`<->`!=`).
 # _canon_cond peels both into a parity bit, so raw and structured agree iff the routing
 # is the same boolean function — and disagree exactly on a real swap.
 

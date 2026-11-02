@@ -1,8 +1,9 @@
 """
-tools/vm_reduce.py — REGION REDUCER (CFG epic V2 / "No More Gotos").
+vm_reduce.py — REGION REDUCER: DREAM's per-sub fallback (vm_decompile.region_reduce).
 
-The single bottom-up CFG reducer that REPLACES the template menagerie
-(`vm_decompile.structure_loops` + `structure_lines` + `structure_switches`).
+The single bottom-up CFG reducer that replaced the template menagerie (structure_loops +
+structure_lines + structure_switches, removed from vm_decompile 2026-11-02); DREAM replaced it in
+turn as the primary structurer (2026-06-10) and calls it for the subs DREAM cannot own.
 
 WHY (the reframe, 2026-06-04 — see ROADMAP "CONTROL-FLOW STRUCTURING" epic +
 [[project_nobunaga_decompiler_purpose]]): the gotos are assembly leftovers from a
@@ -896,7 +897,7 @@ def _structure_loop(h, ctx, outer_loop):
 def _structure_switch(S, ctx, loop):
     """Rung 5: fold the foldable switch dispatched at block `S` to ONE composable node so the
     walk consumes it like a block (and any enclosing loop/if folds around it). Block-level
-    port of vm_decompile.structure_switches: keep the `switch (E) {` opener, DROP the
+    port of the removed template structure_switches: keep the `switch (E) {` opener, DROP the
     `case N: goto L_T;` dispatch lines + the closer, then inline each case-target block's raw
     lines (verbatim — internal gotos/returns stay honest, exactly as V1) in ADDRESS order with
     `case N:` / `default:` labels injected, +1 indent, closing `}` after the last enclosed

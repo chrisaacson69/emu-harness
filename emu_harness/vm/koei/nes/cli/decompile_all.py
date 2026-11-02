@@ -9,7 +9,7 @@ a tool. Regenerate only when vm-disasm.py or vm_decompile.py themselves improve.
 Pipeline (all execution-validated; koeivm package, see ARCHITECTURE.md / ROADMAP):
   vm_disasm     ROM -> VM-asm listing (correct lengths, recursive-descent subs)
   vm_decompile  listing -> per-block C  (spec-agnostic: dispatch keyed on the opcode byte)
-  dream         structure -> readable C  (DREAM primary; vm_reduce/V2 fallback)
+  dream         structure -> readable C  (DREAM; the region reducer vm_reduce as its per-sub fallback)
 
 Usage (run from the tools/ dir so `koeivm` resolves):
   py -3 -m koeivm.cli.decompile_all                 # canonical DREAM C + asm -> decompiled/
@@ -80,13 +80,7 @@ SWITCHABLE_NAMES, SECTIONED_WINDOW = _switchable_section_labels()
 
 from emu_harness.vm.koei.nes import vm_disasm as vmdisasm
 from emu_harness.vm.koei.nes import vm_decompile
-from emu_harness.vm.koei.nes import dream         # DREAM structurer (CFG epic rung-6 cutover; PRIMARY structurer)
 from emu_harness.vm.koei.nes.nobunaga_vm import NobunagaVM
-
-# Wire the DREAM cutover hook: decompile()'s STRUCTURE_DREAM path calls structure_dream
-# per sub, using DREAM where its AST-native gate passes and falling back to V2 otherwise.
-# Done here (not in vm_decompile) so vm_decompile stays import-light for the gate tools.
-vm_decompile.structure_dream = dream.dream_structure_gated
 
 CODE_BANKS = [0, 1, 2, 10, 14, 15]   # banks containing bytecode (banks 3-9/11-13 are pure data).
 # 10 = audio trigger (1 sub), 14 = AI-turn cutscene engine (3 subs); both invoked via call_bank
@@ -97,7 +91,7 @@ CODE_BANKS = [0, 1, 2, 10, 14, 15]   # banks containing bytecode (banks 3-9/11-1
 # This driver writes stages 2-4; stage 1 (native 6502) is mesen-labels.py's territory.
 STAGE_VM    = "2-asm-vm"      # Sea-16 VM bytecode disassembly (bank_NN_vm.asm)
 STAGE_BASIC = "3-c-basic"    # bytecode -> direct goto C (bank_NN.raw.c)
-STAGE_C     = "4-c"          # structured C (DREAM; canonical) / V2 audit (bank_NN.c)
+STAGE_C     = "4-c"          # structured C (DREAM; canonical) (bank_NN.c)
 
 # Var-walk names (M4): {(bank, sub_addr): {slot: semantic_name}} from the toml's
 # [vars.bankN."0xADDR"] sections. Loaded once; bank_subs passes the per-sub dict to
@@ -153,8 +147,8 @@ def bank_subs(bank, tmp_dir, on_sub=None):
                                    collect=collect)
         sub_c = "\n".join(l for l in buf.getvalue().splitlines()
                           if not l.startswith("// Decompiled from")).rstrip("\n")
-        # Readability: inline trivially-single-use synthetic temps (DREAM canonical only).
-        if vm_decompile.STRUCTURE and getattr(vm_decompile, "STRUCTURE_DREAM", False):
+        # Readability: inline trivially-single-use synthetic temps (structured output only).
+        if vm_decompile.STRUCTURE:
             sub_c = vm_decompile.inline_trivial_temps(sub_c)
         subs.append((stub, sub_c))
         if on_sub:
@@ -165,28 +159,20 @@ def bank_subs(bank, tmp_dir, on_sub=None):
 def decompile_bank(bank, out_dir, tmp_dir, suffix=""):
     """Decompile every sub in `bank` into the source/ ladder under `out_dir`. Returns
     (n_subs, n_lines). The C lands in its stage dir — ".raw" (basic) -> 3-c-basic/, else
-    -> 4-c/ (DREAM canonical, or ".v2" audit sibling) — and a canonical run also persists
-    the deterministic VM-asm listing to 2-asm-vm/bank_NN_vm.asm (same listing the decompiler
-    consumed). `suffix`: "" = DREAM hybrid, ".raw" = basic witness, ".v2" = V2 audit."""
+    -> 4-c/ (DREAM canonical) — and a canonical run also persists the deterministic VM-asm
+    listing to 2-asm-vm/bank_NN_vm.asm (same listing the decompiler consumed).
+    `suffix`: "" = structured (canonical), ".raw" = basic witness."""
     _labels, subs, misaligned = bank_subs(bank, tmp_dir)
-    dream_hybrid = vm_decompile.STRUCTURE and getattr(vm_decompile, "STRUCTURE_DREAM", False)
-    v2 = vm_decompile.STRUCTURE and vm_decompile.STRUCTURE_V2
     basic = not vm_decompile.STRUCTURE
-    if dream_hybrid:
+    if not basic:
         pipeline = ("vm-disasm.py (execution-validated lengths) -> vm_decompile.py "
-                    "(opcode-keyed front-end) -> dream.py (DREAM structurer; V2 fallback).")
+                    "(opcode-keyed front-end) -> dream.py (DREAM structurer; region-reducer fallback).")
         tag = ""
-    elif v2:
-        pipeline = ("vm-disasm.py -> vm_decompile.py -> vm_reduce.py (region reducer).")
-        tag = "  (--v2: region-reducer structurer, audit/diff only — not canonical)"
-    elif basic:
+    else:
         pipeline = ("vm-disasm.py (execution-validated lengths) -> vm_decompile.py "
                     "(opcode-keyed) — NO structuring: the direct goto/label form.")
         tag = ("  (BASIC: bytecode -> direct goto-infused C, the intermediary form the "
                "structure engine folds; the CFG-equivalence reference for bank_%02d.c)" % bank)
-    else:
-        pipeline = ("vm-disasm.py -> vm_decompile.py (opcode-keyed).")
-        tag = "  (V1 templates — legacy)"
     c_stage = STAGE_BASIC if basic else STAGE_C
     parts = [
         f"// ============================================================",
@@ -278,26 +264,16 @@ def main():
                          "as bank_NN.raw.c, committed beside the canonical bank_NN.c. This is "
                          "the intermediary the structure engine folds AND the CFG-equivalence "
                          "reference the gate proves bank_NN.c equivalent to. (--raw is an alias.)")
-    ap.add_argument("--v2", action="store_true",
-                    help="structure with the region reducer (vm_reduce) instead of DREAM, writing "
-                         "bank_NN.v2.c / all_banks.v2.c beside the canonical files — audit/diff "
-                         "only (V2 is the per-sub FALLBACK engine; not the canonical output).")
     args = ap.parse_args()
 
-    if args.basic and args.v2:
-        ap.error("--basic/--raw and --v2 are mutually exclusive (--basic skips structuring entirely)")
-    # CFG epic rung-6 CUTOVER: DREAM-hybrid (DREAM primary, V2 fallback) is the DEFAULT
-    # canonical structurer. --basic strips structuring to the goto witness; --v2 selects the
-    # region reducer for an audit diff. Exactly one structurer mode is active per run.
+    # The structured C (DREAM, region-reducer fallback) is the canonical output; --basic strips
+    # structuring to the goto witness.
     suffix = ""
     if args.basic:
         vm_decompile.STRUCTURE = False               # basic: goto/label witness
         suffix = ".raw"
-    elif args.v2:
-        vm_decompile.STRUCTURE_V2 = True             # V2 region reducer (audit)
-        suffix = ".v2"
     else:
-        vm_decompile.STRUCTURE_DREAM = True          # canonical: DREAM primary + V2 fallback
+        vm_decompile.STRUCTURE = True
     banks = [int(b, 0) for b in args.banks.split(",") if b.strip()]
     # Output base is the source/ ladder (decompile_bank routes each artifact to its stage dir).
     out_dir = Path(args.out_dir) if args.out_dir else ROOT / "source"

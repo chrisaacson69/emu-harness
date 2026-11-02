@@ -42,8 +42,8 @@ AUDIO_TRAMPOLINE, BANK_TRAMPOLINE = 0xCA03, 0xCBB1     # fixed-bank entry trampo
 def source_subs(source_dir, pattern="bank_{bank:02d}.c"):
     """A bank_subs that READS the committed canonical C (source/4-c/bank_NN.c) instead of decompiling
     again, so the merged view cannot drift from it: until 2026-10-29 the merge re-ran decompile_all's
-    bank_subs with STRUCTURE_DREAM off (only decompile_all.main sets it), so 349 of 499 subs came out
-    in V1 template form. Also collects each file's declaration block (struct / extern lines) for the
+    bank_subs with DREAM off (only decompile_all.main turned it on), so 349 of 499 subs came out
+    in the template structurer's form (removed 2026-11-02). Also collects each file's declaration block (struct / extern lines) for the
     merged header. -> (bank_subs function, declarations)"""
     decls = []
     chunks = {}
@@ -247,12 +247,12 @@ def main():
     ap.add_argument("--pattern", default="bank_{bank:02d}.c",
                     help="per-bank file name in --source (3-c-basic: bank_{bank:02d}.raw.c)")
     ap.add_argument("--redecompile", action="store_true",
-                    help="decompile afresh (decompile_all.bank_subs, DREAM on) instead of reading --source")
+                    help="decompile afresh (decompile_all.bank_subs, structured) instead of reading --source")
     args = ap.parse_args()
     if args.redecompile:
         from emu_harness.vm.koei.nes.cli import decompile_all
         from emu_harness.vm.koei.nes import vm_decompile
-        vm_decompile.STRUCTURE, vm_decompile.STRUCTURE_V2, vm_decompile.STRUCTURE_DREAM = True, False, True
+        vm_decompile.STRUCTURE = True
         subs_fn, decls = decompile_all.bank_subs, []
     else:
         subs_fn, decls = source_subs(args.source, args.pattern)

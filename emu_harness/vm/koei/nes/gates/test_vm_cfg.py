@@ -4,7 +4,14 @@ tools/test-vm-cfg.py — non-vacuousness tests for the CFG equivalence relation.
 A gate that always says "equivalent" is worthless. These tests prove the relation
 (vm_cfg.structured_equivalent / contract) actually REJECTS a control-flow change:
 inject a misroute into a real sub's structured form and assert the gate flags it,
-while the untouched form passes. Run: py -3 tools/test-vm-cfg.py
+while the untouched form passes.
+
+The structured forms are the region reducer's (vm_decompile.region_reduce), because
+structured_equivalent is the relation that judges it: the reducer is DREAM's per-sub fallback,
+and DREAM's own output is judged by dream_equivalent_ast in cfg_gate. Until 2026-11-02 the
+forms came from the template structurer, removed then.
+
+Run: py -3.14 -m emu_harness.vm.koei.nes.gates.test_vm_cfg
 """
 import io
 import re
@@ -13,18 +20,30 @@ import tempfile
 from contextlib import redirect_stdout
 from pathlib import Path
 
+from emu_harness.vm.koei.nes import dream
 from emu_harness.vm.koei.nes import vm_cfg
+from emu_harness.vm.koei.nes import vm_decompile
 from emu_harness.vm.koei.nes.cli import decompile_all
+
+_BANKS = {}
 
 
 def _grab(bank, sub):
-    """Decompile one sub and return its collect dict (raw + structured + instructions)."""
-    cap = {}
-    with tempfile.TemporaryDirectory() as td:
-        with redirect_stdout(io.StringIO()):
-            decompile_all.bank_subs(bank, Path(td),
-                                    on_sub=lambda s, c: cap.update(c) if s == sub else None)
+    """One sub's collect dict: the raw witness + instructions, and `structured` = the region
+    reducer's fold of it. Each bank is decompiled once, unstructured."""
+    if bank not in _BANKS:
+        got = {}
+        saved, vm_decompile.STRUCTURE = vm_decompile.STRUCTURE, False
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                with redirect_stdout(io.StringIO()):
+                    decompile_all.bank_subs(bank, Path(td), on_sub=lambda s, c: got.__setitem__(s, c))
+        finally:
+            vm_decompile.STRUCTURE = saved
+        _BANKS[bank] = got
+    cap = dict(_BANKS[bank].get(sub) or {})
     assert cap, f"sub ${sub:04X} not found in bank {bank}"
+    cap['structured'] = vm_decompile.region_reduce(cap['raw'], cap['instructions'])
     return cap
 
 
@@ -78,7 +97,7 @@ def main():
         same, _, _ = vm_cfg.structured_equivalent(raw, raw, leaders)
         check(f"b{bank}/${sub:04X}: raw ~= raw (identity)", same)
 
-    # Phase 1 (loop folding): subs whose `structure_loops` emits a real `while`.
+    # Phase 1 (loop folding): subs whose fold emits a real `while`.
     # The gate must (a) accept the genuine fold and (b) reject a loop turned into a
     # non-loop — replacing `while (` with `if (` deletes the back edge, a CFG change
     # the contraction relation MUST catch (else loops could silently degrade to ifs).
@@ -162,36 +181,11 @@ def main():
         bad, _, _ = vm_cfg.structured_equivalent(raw, swapped, leaders)
         check(f"b{bank}/${sub:04X}: break->continue (exit->header) REJECTED", not bad)
 
-    # Phase 2 (multi-back-edge menu loops): a single header with several back edges +
-    # an interleaved exit `return` folds to `while (C) { switch...; continue; ... }` (the
-    # exit block relocated past the `}`). The relation must (a) accept the fold and (b)
-    # reject a continue turned into break (header->exit, which would leave the loop early
-    # instead of re-dispatching) — exercises the loop-context lowering + the
-    # tail-falls-off back-edge rule together.
-    # $B1A6 (submenu_prompt) additionally exercises the line-LESS interior block fix:
-    # its empty-`else` then-body has a folded tail block that emits no C line, which must
-    # still be counted as a loop-body leader (else the body-redirect routes it through
-    # the header, fabricating a spurious back edge — the bug this sub caught).
-    for bank, sub in [(2, 0x8669), (2, 0x86F9), (1, 0xB1A6)]:
-        cap = _grab(bank, sub)
-        _bc, leaders = vm_cfg.bytecode_cfg(cap['instructions'])
-        raw, struct = cap['raw'], cap['structured']
-        has_loop = any('while (' in t for _a, _i, t in struct)
-        has_cont = any(t.strip() == 'continue;' for _a, _i, t in struct)
-        check(f"b{bank}/${sub:04X}: folded menu while+continue", has_loop and has_cont)
-
-        ok, _, _ = vm_cfg.structured_equivalent(raw, struct, leaders)
-        check(f"b{bank}/${sub:04X}: menu-loop fold ~= raw", ok)
-
-        swapped = [(a, i, re.sub(r'\bcontinue;', 'break;', t)) for a, i, t in struct]
-        bad, _, _ = vm_cfg.structured_equivalent(raw, swapped, leaders)
-        check(f"b{bank}/${sub:04X}: continue->break (header->exit) REJECTED", not bad)
-
     # Phase 2 (multi-exit loops): a loop with >1 pure-exit target -- one structural exit
     # (the while-condition false branch) PLUS mid-body `return`s that stay in the body.
     # The relation must accept the fold; and a mid-body return moved OUT of the loop
     # (deleted from the body) must be REJECTED, proving the return's EXIT edge is checked.
-    for bank, sub in [(2, 0x912B), (0, 0x8FF8)]:
+    for bank, sub in [(2, 0x912B)]:
         cap = _grab(bank, sub)
         _bc, leaders = vm_cfg.bytecode_cfg(cap['instructions'])
         raw, struct = cap['raw'], cap['structured']
@@ -254,29 +248,6 @@ def main():
         if bad is not None:
             rej, _, _ = vm_cfg.structured_equivalent(cap['raw'], bad, leaders)
             check(f"b{bank}/${sub:04X}: cond-back-edge as while(1) REJECTED", not rej)
-
-    # while(1) WITH a conditional back edge whose non-continue branch EXITS — the
-    # test-in-the-MIDDLE menu loop ($B6B4 command_menu_select_loop, hdr $B6D6; $AB29).
-    # `_fold_while1` is allowed to attempt these (the relaxed source guard: the other
-    # branch is a pure-exit `return`, so `if(C) continue; return …` exits correctly,
-    # NOT the do-while-loops-wrongly hole — which $830B above still proves the gate
-    # catches). Here: (a) it folds to while(1) + an `if(C) continue;`, (b) fold ~= raw,
-    # (c) swapping that continue->break (header->exit) is REJECTED — proves the
-    # conditional back edge's continue TARGET is checked, the soundness this fold rests on.
-    for bank, sub in [(1, 0xB6B4), (1, 0xAB22)]:    # command_menu_select_loop; render_arms_edit_screen
-        cap = _grab(bank, sub)
-        _bc, leaders = vm_cfg.bytecode_cfg(cap['instructions'])
-        raw, struct = cap['raw'], cap['structured']
-        has_w1 = any(t.strip() == 'while (1) {' for _a, _i, t in struct)
-        has_ifcont = any(re.match(r'if \(.+\) continue;$', t.strip()) for _a, _i, t in struct)
-        check(f"b{bank}/${sub:04X}: folded while(1) + if-continue", has_w1 and has_ifcont)
-
-        ok, _, _ = vm_cfg.structured_equivalent(raw, struct, leaders)
-        check(f"b{bank}/${sub:04X}: while(1)-cond-exit fold ~= raw", ok)
-
-        swapped = [(a, i, re.sub(r'\bcontinue;', 'break;', t)) for a, i, t in struct]
-        bad, _, _ = vm_cfg.structured_equivalent(raw, swapped, leaders)
-        check(f"b{bank}/${sub:04X}: if-continue->break (header->exit) REJECTED", not bad)
 
     # Phase 2 step 3 (two-test "both" loops): header AND tail both 2-way -> a do-while
     # whose HEADER block carries an exit-test `if (C) break;` (the top guard) while the
@@ -418,6 +389,79 @@ def main():
                 rejected_any = True
                 break
         check(f"b{bank}/${sub:04X}: a dropped case (dispatch edge lost) is REJECTED", rejected_any)
+
+    # DREAM's relation (dream_equivalent_ast), which judges every DREAM-owned sub in cfg_gate:
+    # the same non-vacuousness, on DREAM's AST. The loops here (menu while+continue, while(1)
+    # with a conditional exit, a multi-exit loop) were the template structurer's specimens above
+    # until 2026-11-02; DREAM is what structures them now. Each AST must pass, and each mutation
+    # must be REJECTED: an if's arms swapped (the guard runs the wrong body), a break turned
+    # into the loop's continue (exit -> header), a continue into a break (header -> exit).
+    def _first(ast, kind, in_loop=False):
+        """The first node of `kind` (depth-first) with the header of the loop enclosing it. With
+        in_loop, only a node whose innermost enclosing loop/switch is the loop: a break inside a
+        switch leaves the switch (to its merge, which goes on round the loop), not the loop."""
+        def walk(nodes, h, inner_kind):
+            for n in nodes:
+                if not (isinstance(n, tuple) and n and isinstance(n[0], str)):
+                    continue
+                if n[0] == kind and (not in_loop or inner_kind == 'loop'):
+                    return n, h
+                h2 = n[1] if n[0] == 'loop' else h
+                k2 = n[0] if n[0] in ('loop', 'switch') else inner_kind
+                for e in n[1:]:
+                    if isinstance(e, list):
+                        got = walk(e, h2, k2)
+                        if got:
+                            return got
+            return None
+        return walk(ast, None, None)
+
+    def _replace(ast, old, new):
+        """A copy of the AST with node `old` (by identity) replaced by `new`."""
+        def walk(x):
+            if x is old:
+                return new
+            if isinstance(x, list):
+                return [walk(y) for y in x]
+            if isinstance(x, tuple) and x and isinstance(x[0], str):
+                return tuple(walk(e) if isinstance(e, list) else e for e in x)
+            return x
+        return walk(ast)
+
+    for bank, sub in [(2, 0x8669), (2, 0x86F9), (1, 0xB1A6), (1, 0xB6B4), (1, 0xAB22), (0, 0x8FF8)]:
+        cap = _grab(bank, sub)
+        built = dream.dream_ast(cap['raw'], cap['instructions'])
+        check(f"b{bank}/${sub:04X}: DREAM builds an AST", built is not None)
+        if built is None:
+            continue
+        ast, tc, _nxt = built
+
+        def accept(a, cap=cap, tc=tc):
+            return dream.dream_equivalent_ast(cap['raw'], a, tc, tc['leaders'])
+        check(f"b{bank}/${sub:04X}: DREAM AST ~= raw", accept(ast))
+        base_cfg = dream._ast_cfg(ast, tc)
+
+        # A mutation the AST's own CFG does not see is neutral (e.g. a continue after a switch
+        # whose merge is the loop header is never reached), so it proves nothing either way:
+        # only a CFG-changing mutation must be REJECTED, and each sub must have one.
+        mutations = []
+        got = _first(ast, 'if')
+        if got:
+            n = got[0]
+            mutations.append(("if arms swapped", _replace(ast, n, n[:5] + (n[6], n[5]))))
+        brk, cont = _first(ast, 'break', in_loop=True), _first(ast, 'continue')
+        if brk and brk[1] is not None:
+            mutations.append(("break->continue (exit->header)", _replace(ast, brk[0], ('continue', brk[1]))))
+        if brk and cont:
+            mutations.append(("continue->break (header->exit)", _replace(ast, cont[0], brk[0])))
+        live = 0
+        for what, mut in mutations:
+            if dream._ast_cfg(mut, tc) == base_cfg:
+                print(f"  (neutral, skipped)  b{bank}/${sub:04X}: DREAM {what}")
+                continue
+            live += 1
+            check(f"b{bank}/${sub:04X}: DREAM {what} REJECTED", not accept(mut))
+        check(f"b{bank}/${sub:04X}: DREAM has a CFG-changing mutation", live > 0)
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)

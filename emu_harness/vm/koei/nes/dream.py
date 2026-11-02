@@ -1493,27 +1493,32 @@ def dream_equivalent_ast(raw_lines, ast, tc, leaders):
 
 
 # --------------------------------------------------------------------------- #
-# PoC harness: capture one sub's (lines, instructions) via the structure_v2 hook
+# PoC harness: capture one sub's (lines, instructions) — the raw witness bank_subs collects —
 # and dump its tagged CFG + reaching conditions.
 # --------------------------------------------------------------------------- #
-def _capture_sub(bank, sub_addr_hex):
+def _capture_bank(bank):
+    """{body_addr: (raw_lines, instructions)} for every sub in a bank, from an unstructured run."""
     import pathlib
     import tempfile
     from emu_harness.vm.koei.nes.cli import decompile_all as da
     from emu_harness.vm.koei.nes import vm_decompile
-    target = int(sub_addr_hex, 16)
     grab = {}
 
-    def cap(lines, instructions):
-        a0 = instructions[0]['addr'] if instructions else None
-        grab[a0] = (list(lines), instructions)
-        return list(lines)
+    def on_sub(_stub, collect):
+        grab[collect['body_addr']] = (list(collect['raw']), collect['instructions'])
 
-    vm_decompile.structure_v2 = cap
-    vm_decompile.STRUCTURE = True
-    vm_decompile.STRUCTURE_V2 = True
-    with tempfile.TemporaryDirectory() as td:
-        da.bank_subs(bank, pathlib.Path(td))
+    saved, vm_decompile.STRUCTURE = vm_decompile.STRUCTURE, False
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            da.bank_subs(bank, pathlib.Path(td), on_sub=on_sub)
+    finally:
+        vm_decompile.STRUCTURE = saved
+    return grab
+
+
+def _capture_sub(bank, sub_addr_hex):
+    target = int(sub_addr_hex, 16)
+    grab = _capture_bank(bank)
     # match by body addr (== target) or nearest header whose body we grabbed
     if target in grab:
         return grab[target]
@@ -1542,27 +1547,6 @@ def _dump(bank, sub_addr_hex):
     for L in tc['leaders']:
         if L != vm_cfg.EXIT and L in cr:
             print(f"  ${L:X}: {to_c(cr[L])}")
-
-
-def _capture_all(bank):
-    """Capture (raw_lines, instructions) for EVERY sub in a bank via the structure_v2 hook."""
-    import pathlib
-    import tempfile
-    from emu_harness.vm.koei.nes.cli import decompile_all as da
-    from emu_harness.vm.koei.nes import vm_decompile
-    grab = {}
-
-    def cap(lines, instructions):
-        a0 = instructions[0]['addr'] if instructions else None
-        grab[a0] = (list(lines), instructions)
-        return list(lines)
-
-    vm_decompile.structure_v2 = cap
-    vm_decompile.STRUCTURE = True
-    vm_decompile.STRUCTURE_V2 = True
-    with tempfile.TemporaryDirectory() as td:
-        da.bank_subs(bank, pathlib.Path(td))
-    return grab
 
 
 def _gotos(lines):
@@ -1651,7 +1635,7 @@ def dream_equivalent(raw_lines, dream_lines, leaders):
 # (now multi-exit-aware, so early-return regions like `$9A62` no longer blow up), but a genuinely
 # N-way shared region still duplicates a lot — inherently, because a goto-free + structurally-CFG-
 # isomorphic form of an N-way shared region MUST duplicate or use a goto. Past this factor the emit
-# reads worse than V2's honest goto, so we
+# reads worse than the reducer's honest goto, so we
 # DON'T count it a DREAM win (it stays an honest reject) — DREAM takes the subs it folds READABLY.
 DUP_CAP = 4
 
@@ -1733,7 +1717,7 @@ def _check(bank, verbose=False):
     """Spike-A measurement: run dream_structure over every sub in `bank`, gate each vs its
     raw witness, and tally folded / gate-rejected / over-duplicated / passthrough + goto deltas."""
     from emu_harness.vm.koei.nes import vm_cfg
-    grab = _capture_all(bank)
+    grab = _capture_bank(bank)
     elig = folded = rejected = overdup = passthrough = reshared = 0
     g_raw_e = g_dream_e = g_reshared = 0               # goto totals over ELIGIBLE-and-validated
     rej_list, win_list, dup_list, reshare_list = [], [], [], []
@@ -1836,14 +1820,14 @@ def _emit_one(bank, sub_addr_hex):
 
 
 def dream_structure_gated(lines, instructions):
-    """CUTOVER entry — the hybrid emit hook (mirrors vm_decompile.structure_v2's contract).
+    """The structurer's entry, called per sub by vm_decompile.decompile.
 
     Returns DREAM-structured `(addr, indent, text)` lines IFF the AST-native gate
     (`dream_equivalent_ast`) passes AND the merge-duplication factor is within `DUP_CAP`
     (running the emit-time `_reshare` idiomatic-goto pass first when an over-dup would
     otherwise sink it). On ANY failure — out of scope (returns None from `dream_ast`),
     gate reject, or over-dup that `_reshare` can't fold — returns the input `lines`
-    UNCHANGED, the agreed fallback signal: the caller then routes the sub to V2.
+    UNCHANGED, the agreed fallback signal: the caller then routes the sub to the region reducer.
 
     This is the SAME validated chain `_emit_one` reports interactively, with the verdict
     turned into a value rather than printed — so a sub is DREAM-owned in the canonical
@@ -1924,7 +1908,7 @@ def _gated(lines, build, why=None):
             if why is not None:
                 why.append("reshared")
             return rout
-        return no("over-dup")                          # honest over-dup ⇒ V2 reads better
+        return no("over-dup")                          # honest over-dup ⇒ the reducer reads better
     if why is not None:
         why.append("dream")
     return out
@@ -1935,7 +1919,7 @@ def _check2(bank):
     eligible subs: how many more does reorder-tolerance recover, and is any NEWLY-PASSING
     sub actually wrong (sanity: new gate should be a strict superset that stays sound)?"""
     from emu_harness.vm.koei.nes import vm_cfg
-    grab = _capture_all(bank)
+    grab = _capture_bank(bank)
     old_ok = new_ok = elig = 0
     newly = []
     for a0, (raw, instrs) in sorted(grab.items(), key=lambda x: (x[0] is None, x[0])):
@@ -1972,7 +1956,7 @@ def _check3(bank, verbose=False):
     over a bank's eligible subs. Reports validated counts, the reorder wins (newly passing),
     and any REGRESSION (old-pass / new-fail — should be empty if the AST gate is sound)."""
     from emu_harness.vm.koei.nes import vm_cfg
-    grab = _capture_all(bank)
+    grab = _capture_bank(bank)
     old_ok = new_ok = elig = guard = 0
     newly, regress = [], []
     for a0, (raw, instrs) in sorted(grab.items(), key=lambda x: (x[0] is None, x[0])):

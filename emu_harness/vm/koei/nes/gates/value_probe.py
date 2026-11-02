@@ -13,7 +13,8 @@ Converted from two na1-decompiler attic probes (2026-10-27): probe-ternary-folds
 max_word / is_tile_in_bounds on the ROM but compared them with hand-written Python rather than with
 the C, so a decompiler regression passed it; probe-espionage asked the argument order once, by hand.
 
-The evaluator covers only what the fixtures print: `return E;` and `if (E) return E;` lines over
+The evaluator covers only what the fixtures print: `return E;`, `if (E) return E;` and
+`if (E) { ... } else { ... }` blocks (else-if chains, nesting) over
 integer literals, args, `(unsigned)` / `(word)` / `(sword)` casts, + - * << >> & | ^, the six
 comparisons, && || ! ?:, and calls. Words are 16-bit; a comparison is signed unless an operand is
 cast `(unsigned)`. Anything else raises Unsupported, and the probe fails rather than passing a
@@ -191,49 +192,84 @@ def compile_sub(c_text, call):
     body = lines[lines.index(head) + 1:]
     if not body or body[-1] != "}":
         raise Unsupported("body does not close")
-    stmts = []
-    for ln in body[:-1]:
-        g = re.fullmatch(r"if \((.*)\) return (.*);", ln)
+    expr = lambda s: _Parser(_tokens(s), call).parse()
+
+    def block(i, top):
+        """Statements from body[i] to the brace that closes this block -> (stmts, index of it)."""
+        stmts = []
+        while i < len(body):
+            ln = body[i]
+            if ln == "}" or ln.startswith("} else"):
+                return stmts, i
+            g = re.fullmatch(r"if \((.*)\) return (.*);", ln)
+            if g:
+                stmts.append(("if", expr(g.group(1)), [("ret", expr(g.group(2)))], []))
+                i += 1; continue
+            g = re.fullmatch(r"return (.*);", ln)
+            if g:
+                stmts.append(("ret", expr(g.group(1))))
+                i += 1; continue
+            g = re.fullmatch(r"if \((.*)\) \{", ln)
+            if g:
+                node, i = if_chain(expr(g.group(1)), i + 1)
+                stmts.append(node); continue
+            raise Unsupported(f"statement {ln!r}")
+        if top:
+            return stmts, i
+        raise Unsupported("block does not close")
+
+    def if_chain(cond, i):
+        then, i = block(i, False)
+        close = body[i]
+        if close == "}":
+            return ("if", cond, then, []), i + 1
+        if close == "} else {":
+            other, i = block(i + 1, False)
+            if body[i] != "}":
+                raise Unsupported(f"else closes with {body[i]!r}")
+            return ("if", cond, then, other), i + 1
+        g = re.fullmatch(r"\} else if \((.*)\) \{", close)
         if g:
-            stmts.append((_Parser(_tokens(g.group(1)), call).parse(), _Parser(_tokens(g.group(2)), call).parse()))
-            continue
-        g = re.fullmatch(r"return (.*);", ln)
-        if g:
-            stmts.append((None, _Parser(_tokens(g.group(1)), call).parse()))
-            continue
-        raise Unsupported(f"statement {ln!r}")
+            node, i = if_chain(expr(g.group(1)), i + 1)
+            return ("if", cond, then, [node]), i
+        raise Unsupported(f"brace {close!r}")
+
+    stmts, end = block(0, True)
+    if end != len(body) - 1:
+        raise Unsupported(f"stray {body[end]!r}")
+
+    def execute(stmts, env):
+        for s in stmts:
+            if s[0] == "ret":
+                return s[1](env)[0]
+            v = execute(s[2] if _truth(s[1](env)) else s[3], env)
+            if v is not None:
+                return v
+        return None
 
     def run(args):
         env = {f"arg{i + 1}": a & 0xFFFF for i, a in enumerate(args)}
-        for cond, val in stmts:
-            if cond is None or _truth(cond(env)):
-                return val(env)[0]
-        raise Unsupported("fell off the end")
+        v = execute(stmts, env)
+        if v is None:
+            raise Unsupported("fell off the end")
+        return v
     return m.group(1), nargs, run
 
 
-_DEFAULT_FLAGS = {"STRUCTURE": True, "STRUCTURE_V2": False, "STRUCTURE_DREAM": False}
-
-
 def rendered_c(game, bank, stub):
-    """The structured C the decompiler prints for one sub, as `titles decompile` would."""
+    """The structured C the decompiler prints for one sub, exactly as `titles decompile` does (the
+    canonical structurer). Until 2026-11-02 this forced the template structurer's flags and so
+    evaluated C that nothing committed."""
     from emu_harness.vm.koei.nes import titles
     VC, _cfg, labs, _sys = titles.decompiler_for(game, bank)
-    saved = {k: getattr(VC, k) for k in _DEFAULT_FLAGS}
-    try:
-        for k, v in _DEFAULT_FLAGS.items():
-            setattr(VC, k, v)
-        with tempfile.TemporaryDirectory() as td:
-            asm = Path(td) / "bank.asm"
-            with contextlib.redirect_stdout(io.StringIO()):
-                titles.disasm(game, bank, str(asm))
-            buf = io.StringIO()
-            with contextlib.redirect_stdout(buf):
-                VC.decompile(str(asm), stub, labels=labs)
-        return buf.getvalue(), labs
-    finally:
-        for k, v in saved.items():
-            setattr(VC, k, v)
+    with tempfile.TemporaryDirectory() as td:
+        asm = Path(td) / "bank.asm"
+        with contextlib.redirect_stdout(io.StringIO()):
+            titles.disasm(game, bank, str(asm))
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            VC.decompile(str(asm), stub, labels=labs)
+    return buf.getvalue(), labs
 
 
 def check(game="na1", verbose=False):

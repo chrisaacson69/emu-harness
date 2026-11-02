@@ -273,72 +273,28 @@ def test_byte_immediate_keeps_its_sign(tmp_path):
     assert re.search(r"local8 [!=]= -1\)", sub) and not re.search(r"local8 [!=]= 1\)", sub), sub
 
 
-def _eval_c(cond, env):
-    """Evaluate a decompiled C condition over small ints (casts dropped; enough for the inverter)."""
-    py = re.sub(r"\(unsigned\)", "", cond).replace("&&", " and ").replace("||", " or ")
-    py = re.sub(r"!(?!=)", " not ", py)
-    return bool(eval(py, {}, dict(env)))
-
-
-def test_invert_condition_negates_at_the_top_level():
-    """invert_condition must be the logical negation. The textual version split at the first
-    comparison anywhere, so NA1's `!((A > 10) || (B > 4))` (is_cell_clear_of_bits $82E9, and
-    $89FD, $930A) inverted to `!((A <= 10) || (B > 4))`, i.e. A && !B; the ROM returns 1 for
-    (0, 5). Each case is checked by value, and the textual inverter is planted and must fail."""
-    import itertools
-    from emu_harness.vm.koei.nes.vm_decompile import invert_condition
-
-    def textual(cond):   # the pre-fix inverter, kept as the planted fault
-        cond = cond.strip()
-        if cond.startswith('(') and cond.endswith(')'):
-            cond = cond[1:-1]
-        for op, inv in (('<', '>='), ('>', '<='), ('<=', '>'), ('>=', '<'), ('==', '!='), ('!=', '==')):
-            m = re.match(rf'^(.+?)\s+{re.escape(op)}\s+(.+?)$', cond)
-            if m:
-                return f"({m.group(1)} {inv} {m.group(2)})"
-        return f"!({cond})"
-
-    cases = ["!((((unsigned)a > (unsigned)10) || ((unsigned)b > (unsigned)4)))",
-             "!((a || (b <= 0)))", "(a == 1) && (b == 2)", "((a + b) == c)", "a < b",
-             "!((a == b))", "(a & b) == c", "a == b & c", "!(a) && !(b)", "((a - b) > 5)"]
-    grid = [dict(zip("abc", v)) for v in itertools.product((0, 1, 2, 5, 11), repeat=3)]
-    for cond in cases:
-        inv = invert_condition(cond)
-        assert all(_eval_c(inv, e) != _eval_c(cond, e) for e in grid), (cond, inv)
-    assert invert_condition("!((a == b))") == "(a == b)"
-    assert any(_eval_c(textual(c), e) == _eval_c(c, e) for c in cases for e in grid)
-
-
 def test_value_probe_passes_and_planted_renderings_fail():
-    """gates.value_probe evaluates the rendered C against the ROM. It must pass on NA1, and fail when
-    the decompiler is given back two bugs it had: the textual inverter (2026-10-27, $82E9's
-    `!(A || B)` printed as `A && !B`) and call arguments in push order (fixed 2026-06-03, M3)."""
+    """gates.value_probe evaluates the rendered C (DREAM's) against the ROM. It must pass on NA1, and
+    fail when the renderer is given a wrong guard or call arguments in push order (fixed 2026-06-03,
+    M3). The guard plant drops DREAM's negation of an un-flipped if (the then-arm runs on the wrong
+    condition): DREAM's form of the textual-inverter bug the template structurer had (2026-10-27,
+    $82E9's `!(A || B)` printed as `A && !B`), which its AST gate cannot see because it is emit-only."""
     import pytest
-    from emu_harness.vm.koei.nes import titles, vm_decompile as VC
+    from emu_harness.vm.koei.nes import dream, titles, vm_decompile as VC
     from emu_harness.vm.koei.nes.gates import value_probe as VP
     if not titles.game_cfg("na1")["_rom"].exists():
         pytest.skip("na1-decompiler ROM not present")
     assert VP.check() == []
 
-    def textual(cond):
-        cond = cond.strip()
-        if cond.startswith('(') and cond.endswith(')'):
-            cond = cond[1:-1]
-        for op, inv in (('<', '>='), ('>', '<='), ('<=', '>'), ('>=', '<'), ('==', '!='), ('!=', '==')):
-            m = re.match(rf'^(.+?)\s+{re.escape(op)}\s+(.+?)$', cond)
-            if m:
-                return f"({m.group(1)} {inv} {m.group(2)})"
-        return f"!({cond})"
-
-    inv, enums = VC.invert_condition, VC._apply_arg_enums
+    neg, enums = dream.neg, VC._apply_arg_enums
     try:
-        VC.invert_condition = textual
+        dream.neg = lambda e: e
         assert [n for n, _ in VP.check()] == ["is_cell_clear_of_bits"]
-        VC.invert_condition = inv
+        dream.neg = neg
         VC._apply_arg_enums = lambda f, a: enums(f, a)[::-1]
         assert [n for n, _ in VP.check()] == ["is_cell_clear_of_bits"]
     finally:
-        VC.invert_condition, VC._apply_arg_enums = inv, enums
+        dream.neg, VC._apply_arg_enums = neg, enums
 
 
 def test_value_probe_refuses_what_it_cannot_read():

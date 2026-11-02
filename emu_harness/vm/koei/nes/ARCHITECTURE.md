@@ -16,16 +16,16 @@ tools/
     vm_disasm.py         #   bytecode -> VM-asm listing               (pipeline stage 1)
     vm_decompile.py      #   VM-asm -> per-block C + the structurer dispatch (stage 2)
     vm_cfg.py            #   bytecode/struct CFG + the equivalence relations (the gate core)
-    vm_reduce.py         #   V2 region reducer  (the per-sub FALLBACK structurer)
-    dream.py             #   DREAM structurer   (the PRIMARY structurer)        (stage 3)
+    vm_reduce.py         #   region reducer     (DREAM's per-sub fallback)
+    dream.py             #   DREAM structurer   (the structurer)                (stage 3)
     vm_stack_effect.py   #   the audited per-opcode data-stack model
     vm-opcodes-v2.toml   #   package-owned data: the opcode table
-    cli/                 # COMMAND ENTRY POINTS — run via `python -m na1dream.cli.X`
+    cli/                 # COMMAND ENTRY POINTS — run via `python -m emu_harness.vm.koei.nes.cli.X`
       decompile_all.py   #   the canonical generator: bank_NN.c / .raw.c / _vm.asm
       decompile_merged.py#   the merged PRG-keyed all_banks view
-    gates/               # THE SAFETY NET — run via `python -m na1dream.gates.X`
-      cfg_gate.py        #   495-sub CFG equivalence gate (--dream / --v2)
-      test_vm_cfg.py     #   the 114 soundness unit-suite
+    gates/               # THE SAFETY NET — run via `python -m emu_harness.vm.koei.nes.gates.X`
+      cfg_gate.py        #   CFG equivalence gate over the printed C, each sub by its owner's relation
+      test_vm_cfg.py     #   non-vacuousness of both relations (reducer + DREAM)
       stack_audit.py     #   per-opcode stack-effect audit vs the live handlers
   attic/                 # archaeology — one-off find/map/probe scripts, kept not maintained
   lua/                   # Mesen emulator scripts (a different runtime)
@@ -38,16 +38,15 @@ paths, so commands work regardless of the current directory.
 
 ## How to run things
 
-Run from the **`tools/` directory** so `na1dream` resolves as a top-level package:
+From anywhere (the package is installed; NA1 regenerates its ladder with its own `tools/na1_regen.py`):
 
 ```
-cd tools
-py -3 -m na1dream.cli.decompile_all            # regenerate the canonical C + asm oracles
-py -3 -m na1dream.cli.decompile_all --basic    # the basic goto-form (bank_NN.raw.c)
-py -3 -m na1dream.gates.cfg_gate --dream       # gate the canonical hybrid output (495/495)
-py -3 -m na1dream.gates.test_vm_cfg            # the 114 soundness suite
-py -3 -m na1dream.gates.stack_audit           # the stack-effect audit
-py -3 -m na1dream.dream --emit 15 CA9C         # inspect DREAM's output for one sub
+py -3.14 -m emu_harness.vm.koei.nes.cli.decompile_all          # regenerate the canonical C + asm oracles
+py -3.14 -m emu_harness.vm.koei.nes.cli.decompile_all --basic  # the basic goto-form (bank_NN.raw.c)
+py -3.14 -m emu_harness.vm.koei.nes.gates.cfg_gate             # gate the printed C (DREAM / reducer by owner)
+py -3.14 -m emu_harness.vm.koei.nes.gates.test_vm_cfg          # the relations' non-vacuousness suite
+py -3.14 -m emu_harness.vm.koei.nes.gates.stack_audit          # the stack-effect audit
+py -3.14 -m emu_harness.vm.koei.nes.dream --emit 15 CA9C       # inspect DREAM's output for one sub
 ```
 
 ## Where does a NEW script go? (the decision)
