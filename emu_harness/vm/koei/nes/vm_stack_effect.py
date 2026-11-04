@@ -227,6 +227,29 @@ def _build():
 _build()
 
 
+# What each opcode READS, measured on the live handlers (2026-11-04): each occurrence sampled run with
+# regL, then regR, varied over 0, 1, the other register's value and two others, with every stacked
+# word a RAM pointer (a popped pointer into ROM hides POPSTORE's read); a register is read
+# if anything else moved with it, or its own result is neither a pass-through nor a constant. Set by
+# hand, with the reason: the shifts $BD-$BF (the measuring shift count zeroed them) and the
+# indirect calls $DD / $EA (their target is regL; a measured bad target only traps). RETURN is left
+# out: it reads regL for a value sub and not for a void one, and return_phis covers the first.
+REG_READS = {
+    0x20: 'L', 0x21: 'L', 0x22: 'L', 0x23: 'L', 0x24: 'L', 0x25: 'L', 0x26: 'L', 0x27: 'L',
+    0x28: 'L', 0x29: 'L', 0x2A: 'L', 0x2B: 'L', 0x2C: 'L', 0x2D: 'L', 0x2E: 'L', 0x72: 'L',
+    0x73: 'L', 0x74: 'L', 0x75: 'L', 0x76: 'L', 0x77: 'L', 0x78: 'L', 0x79: 'L', 0x7A: 'L',
+    0x7B: 'L', 0x7C: 'L', 0x7D: 'L', 0x7E: 'L', 0x85: 'L', 0x8F: 'L', 0x90: 'L', 0xA2: 'L',
+    0xA8: 'L', 0xA9: 'L', 0xB0: 'L', 0xB1: 'L', 0xB3: 'L', 0xB5: 'LR', 0xB6: 'LR', 0xB8: 'LR',
+    0xB9: 'LR', 0xBA: 'LR', 0xBB: 'LR', 0xBC: 'LR', 0xBD: 'LR', 0xBE: 'LR', 0xBF: 'LR',
+    0xC0: 'LR', 0xC1: 'LR', 0xC2: 'LR', 0xC3: 'LR', 0xC4: 'LR', 0xC5: 'LR', 0xC6: 'LR',
+    0xC7: 'LR', 0xC8: 'LR', 0xC9: 'LR', 0xCB: 'L', 0xCD: 'LR', 0xD0: 'L', 0xD1: 'L', 0xD2: 'L',
+    0xD3: 'L', 0xD4: 'L', 0xD5: 'L', 0xD7: 'L', 0xD8: 'L', 0xD9: 'LR', 0xDA: 'LR', 0xDB: 'LR',
+    0xDC: 'LR', 0xDD: 'L', 0xEA: 'L',
+}
+REG_READS.update({0x2F: 'L', 0x86: 'L'})      # stores NA1 never emits, so unmeasured; a sibling may
+REG_READS[0xD9] = 'L'     # SWITCH uses regR as scratch: over 27 sites x 13 regL, it never steers it
+
+
 def effect(op):
     """Return the Effect for an opcode byte, or None if the byte is not a known opcode
     (operand bytes never reach here — the disassembler tiles them away)."""

@@ -868,7 +868,57 @@ _DEREF_REGA = {'loadA_ind_word'}
 _STORE_IND_REGA = {'storeA_ind_byte', 'storeA_ind_word'}
 
 
-def value_merge_phis(instructions):
+def register_liveness(instructions):
+    """{leader: set of 'A' / 'B' live into that block}: read before written on some path, RETURN
+    aside. regA is the handlers' regL, regB their regR. Reads are REG_READS (measured on the live
+    handlers), writes the audited STACK_EFFECT; a call clobbers both, and an opcode the audit only
+    probes kills nothing, so it can over-report but not hide a value."""
+    from .vm_stack_effect import REG_READS, STACK_EFFECT
+    cfg, leaders = _bytecode_cfg_raw(instructions)
+    block_of = _block_of_fn(leaders)
+    bmap = {L: [] for L in leaders}
+    for ins in instructions:
+        bmap[block_of(ins['addr'])].append(ins)
+
+    def step_back(ins, live):
+        """live before `ins`, from live after it."""
+        op = ins['bytes'][0]
+        if op == 0xCD:                                  # SWAP exchanges: nothing is consumed by it
+            return { {'A': 'B', 'B': 'A'}[x] for x in live }
+        out = set(live)
+        eff = STACK_EFFECT.get(op)
+        if eff is not None and eff.cls != 'probe':
+            if eff.cls == 'call':
+                out -= {'A', 'B'}
+            if eff.regL == 'w':
+                out.discard('A')
+            if eff.regR == 'w':
+                out.discard('B')
+        r = REG_READS.get(op, '')
+        if 'L' in r:
+            out.add('A')
+        if 'R' in r:
+            out.add('B')
+        return out
+
+    live = {L: set() for L in leaders}
+    changed = True
+    while changed:
+        changed = False
+        for L in leaders:
+            cur = set()
+            for s in cfg.get(L, ()):
+                if s is not EXIT:
+                    cur |= live.get(s, set())
+            for ins in reversed(bmap[L]):
+                cur = step_back(ins, cur)
+            if cur != live[L]:
+                live[L] = cur
+                changed = True
+    return live
+
+
+def value_merge_phis(instructions, reg='A'):
     """Find regA VALUE-MERGE phis with SIDE-EFFECTING arms: a merge whose FIRST op CONSUMES regA --
     a store of regA to a local/global (`storeA_*`) or a branch on regA (`branch_z/nz_abs`) -- reached
     by >=2 preds that leave a DIFFERENT regA. Name the temp each pred materialises it into.
@@ -908,7 +958,12 @@ def value_merge_phis(instructions):
     is carried IN, not recomputed in-block); >=2 preds; each leaves by an unconditional jump or
     fall-through (a conditional-branch pred is skipped -- its regA is its own branch condition, not a
     merged value); preds' blocks are NOT all identical (>=2 distinct signatures -> regA genuinely
-    differs); and NOT a value-diamond / boolean merge (those fold to a ternary -- the better form)."""
+    differs); and NOT a value-diamond / boolean merge (those fold to a ternary -- the better form).
+
+    Which merges: until 2026-11-04 a whitelist of first ops (store, branch, deref), so a value read by
+    anything else leaked: the Give guard ($AA79, popB then a compare) printed morale for both arms,
+    and $A753 (add, regB) dropped the 17-fief table. Now any merge the register is LIVE into, for regA
+    and, with `reg='B'`, for regB (phi_valb_<merge>); push_phis and return_phis keep their merges."""
     cfg, leaders = _bytecode_cfg_raw(instructions)
     block_of = _block_of_fn(leaders)
     bmap = {L: [] for L in leaders}
@@ -918,6 +973,11 @@ def value_merge_phis(instructions):
     folded_merges = ({d['merge'] for d in value_diamonds(instructions)}
                      | {r['merge'] for r in boolean_regions(instructions)})
 
+    if reg == 'A':
+        folded_merges |= {m for (m, _t) in return_phis(instructions).values()}
+        folded_merges |= {m for (m, _t) in push_phis(instructions).values()}
+    live = register_liveness(instructions)
+
     def blk_sig(p):
         return tuple((i['mnemonic'], i.get('operand', '') or '') for i in bmap.get(p, []))
 
@@ -926,8 +986,8 @@ def value_merge_phis(instructions):
         if M in folded_merges:                                     # handled by the ternary fold
             continue
         blk = bmap.get(M, [])
-        if not blk or blk[0]['mnemonic'] not in (_STORE_REGA | _STORE_IND_REGA | _BRANCH_REGA | _DEREF_REGA):
-            continue                                               # consumer must read regA first
+        if not blk or reg not in live.get(M, ()):
+            continue                                               # nothing reads it before a write
         ps = [p for p in preds.get(M, ()) if p is not EXIT]
         if len(ps) < 2:
             continue
@@ -1469,7 +1529,11 @@ def lower_struct_cfg(lines, leaders, orient=None):
     # by merge_after / tail_redirect), not to a sibling block after the brace.
     lex_fall = {}
     _prev = None
-    for _addr, _ind, _text in lines:
+    _label_at = {}
+    for _k, (_addr, _ind, _text) in enumerate(lines):
+        if _RE_LABEL.match(_text.strip()):
+            _label_at.setdefault(int(_text.strip()[2:6], 16), _k)
+    for _k, (_addr, _ind, _text) in enumerate(lines):
         _t = _text.strip()
         if _RE_LABEL.match(_t):
             _cur = int(_t[2:6], 16)
@@ -1482,6 +1546,14 @@ def lower_struct_cfg(lines, leaders, orient=None):
             if (_prev is not None and _prev is not EXIT and _prev not in lex_fall
                     and _cur < _prev):
                 lex_fall[_prev] = _cur            # reordered (backward), label-anchored fall target
+            # A FORWARD skip is real when the block it skips is labelled LATER: a flush only moves
+            # content past a label, it never sends a block's own label beyond the next one. Missed
+            # until 2026-11-04: char_classify's $CE11 printed straight into $CE1D, past $CE16, and
+            # both this gate and _honest_repair read the address-next block as the fall.
+            elif (_prev is not None and _prev is not EXIT and _prev not in lex_fall
+                    and _cur > _prev and next_leader.get(_prev) not in (None, EXIT, _cur)
+                    and _label_at.get(next_leader[_prev], -1) > _k):
+                lex_fall[_prev] = _cur
             _prev = _cur
             continue
         if _t == '}' or _t == '} else {' or _RE_DOWHILE_CLOSE.match(_t):

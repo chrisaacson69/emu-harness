@@ -1454,6 +1454,7 @@ def decompile(filepath, sub_addr, labels=None, var_names=None, collect=None):
     # materialise into the PRED's block (the fall pred's else block, NOT the merge) so DREAM places
     # it inside the arm, not after the join. See vm_cfg.value_merge_phis ($A45A).
     val_phi_sites = _vmcfg.value_merge_phis(instructions)
+    valb_phi_sites = _vmcfg.value_merge_phis(instructions, reg='B')   # the same repair for regB
     diamonds = _vmcfg.value_diamonds(instructions)
     dia_by_head = {d['head']: d for d in diamonds}
     dia_fall_jump = {d['fall_jump_addr'] for d in diamonds if d['fall_jump_addr'] is not None}
@@ -1602,6 +1603,12 @@ def decompile(filepath, sub_addr, labels=None, var_names=None, collect=None):
                 # vs the old state.emit). See vm_cfg.value_merge_phis.
                 state.lines.append((_vtag, state.indent, f"{_vnm} = {_vv};"))
             state.regA = _vnm
+        if ins['addr'] in valb_phi_sites:
+            _vm, _vtag = valb_phi_sites[ins['addr']]
+            _vnm = f"phi_valb_{_vm:04x}"
+            if state.regB != _vnm:
+                state.lines.append((_vtag, state.indent, f"{_vnm} = {state.regB};"))
+            state.regB = _vnm
 
         # Label for branch targets — AFTER the phi materialise (see note above) so a jump arm's
         # `goto L_<merge>` lands below the fall-through pred's `phi = …` instead of clobbering on it.

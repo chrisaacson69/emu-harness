@@ -132,7 +132,7 @@ for exact extents and text, and drive its sound engine one trigger at a time (Ma
 | both | Call graph and order: *library* `passes.callgraph` (`leaves_first`, `layers`, `bank_order`); VM: `py -3.14 -m emu_harness.vm.koei.nes.callgraph <title> --bank-order` |
 | vm | Round-trip: `py -3.14 -m emu_harness.vm.koei.nes.gates.roundtrip --game <title>`; stack effects: `...gates.stack_audit`; CFG: `...gates.cfg_gate` |
 | vm | Primitives against the live handler: `py -3.14 -m emu_harness.vm.koei.nes.titles emulate <title> <0xSUB> [args]` |
-| vm | Rendered C against the ROM: `py -3.14 -m emu_harness.vm.koei.nes.gates.value_probe --game <title>` (the printed C of a sub whose result depends on its arguments and ROM alone, evaluated, vs `titles.run_sub`: locals, loops, reads of ROM; calls run the callee on the ROM, so argument order counts; a store through a pointer or a global is refused; add fixtures per title) |
+| vm | Rendered C against the ROM: `py -3.14 -m emu_harness.vm.koei.nes.gates.value_probe --game <title>` (the printed C of a sub whose result depends on its arguments and ROM alone, evaluated, vs `titles.run_sub`: locals, loops, reads of ROM; calls run the callee on the ROM, so argument order counts; a store through a pointer or a global is refused; add fixtures per title), and `...gates.value_merges --game <title>` (every register live into a merge with differing arms is kept by a ternary, a boolean region or a phi; the arms' values are what the C can silently lose while the control flow stays right) |
 | native | Partition edges: *library* `passes.native.partition_edges`, `reachable` |
 
 **Lessons** (*Structure*): verify the primitive layer before building on it (one compare fix cleared

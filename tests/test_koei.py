@@ -309,6 +309,51 @@ def test_a_native_callee_is_no_call_level():
     assert vm.mem.read_word(rec + 12) > 0            # loyalty rose
 
 
+def test_every_live_value_at_a_merge_is_kept():
+    """gates.value_merges: a register live into a merge with differing arms needs a form that keeps
+    the value. NA1 must be clean, and must not be with the repair off: the Give guard ($AA79) and the
+    17-fief table at $A753 are what it dropped. A store through a popped pointer has to count as a
+    read (the first measurement missed POPSTORE, and deduct_byte_at lost its floor)."""
+    import pytest
+    from emu_harness.vm.koei.nes import titles, vm_cfg
+    from emu_harness.vm.koei.nes.gates import value_merges as VM
+    from emu_harness.vm.koei.nes.vm_stack_effect import REG_READS
+    if not titles.game_cfg("na1")["_rom"].exists():
+        pytest.skip("na1-decompiler ROM not present")
+    assert REG_READS[0xB1] == 'L' and REG_READS[0xD4] == 'L'
+    subs, rows = VM.census("na1")
+    assert subs == 499 and rows == []
+    real = vm_cfg.value_merge_phis
+    vm_cfg.value_merge_phis = lambda ins, reg='A': {}
+    try:
+        _s, off = VM.census("na1")
+    finally:
+        vm_cfg.value_merge_phis = real
+    merges = {(m, r) for _b, _s2, m, r, _w in off}
+    assert (0xAA79, 'A') in merges and (0xA753, 'B') in merges
+
+
+def test_liveness_treats_swap_as_an_exchange():
+    """SWAP moves a value; it does not consume one. count_decimal_digits swaps a dead regR out and
+    overwrites it, and reading SWAP as a use made regB live with no definition (`phi_valb = ?`)."""
+    from emu_harness.vm.koei.nes import vm_cfg
+    ins = [{'addr': 0x100, 'bytes': [0x4A], 'mnemonic': 'loadA_imm4', 'operand': ''},
+           {'addr': 0x101, 'bytes': [0xCD], 'mnemonic': 'swap_AB', 'operand': ''},
+           {'addr': 0x102, 'bytes': [0x0C], 'mnemonic': 'loadA_local_pos', 'operand': ''},
+           {'addr': 0x103, 'bytes': [0xCF], 'mnemonic': 'vm_return', 'operand': ''}]
+    assert vm_cfg.register_liveness(ins)[0x100] == set()
+
+
+def test_the_gate_sees_a_block_skipped_forward():
+    """A plain block printed straight into a later block, past its true successor, is a wrong fall.
+    The gate read the address-next block there, so it passed (char_classify's $CE11 into $CE1D)."""
+    from emu_harness.vm.koei.nes import vm_cfg
+    leaders = [0x10, 0x20, 0x30]
+    lines = [(0x10, 1, "x = 1;"), (0x30, 0, "L_0030:"), (0x30, 1, "return 2;"),
+             (0x20, 0, "L_0020:"), (0x20, 1, "return 1;")]
+    assert vm_cfg.lower_struct_cfg(lines, leaders)[0x10] == frozenset({0x30})
+
+
 def test_value_probe_passes_and_planted_renderings_fail():
     """gates.value_probe evaluates the rendered C (DREAM's) against the ROM. It must pass on NA1, and
     fail when the renderer is given a wrong guard or call arguments in push order (fixed 2026-06-03,
