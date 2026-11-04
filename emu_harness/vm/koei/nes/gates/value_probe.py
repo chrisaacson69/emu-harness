@@ -13,12 +13,15 @@ Converted from two na1-decompiler attic probes (2026-10-27): probe-ternary-folds
 max_word / is_tile_in_bounds on the ROM but compared them with hand-written Python rather than with
 the C, so a decompiler regression passed it; probe-espionage asked the argument order once, by hand.
 
-The evaluator covers only what the fixtures print: `return E;`, `if (E) return E;` and
-`if (E) { ... } else { ... }` blocks (else-if chains, nesting) over
-integer literals, args, `(unsigned)` / `(word)` / `(sword)` casts, + - * << >> & | ^, the six
-comparisons, && || ! ?:, and calls. Words are 16-bit; a comparison is signed unless an operand is
-cast `(unsigned)`. Anything else raises Unsupported, and the probe fails rather than passing a
-fixture it could not read.
+The evaluator covers only what the fixtures print: `return E;`, `if (E) return E;`,
+`if (E) { ... } else { ... }` blocks (else-if chains, nesting), `while (E) { ... }` with `break;` and
+`continue;`, assignment to args and frame locals (localN, phi_*), and a call as a statement, over
+integer literals, args, locals, `(unsigned)` / `(word)` / `(sword)` casts, + - * / % << >> & | ^, the
+six comparisons, && || ! ?:, calls, and `*(byte*)(E)` / `*(word*)(E)` reads of the ROM-initial
+memory. Words are 16-bit; a comparison, / and % are signed unless an operand is cast `(unsigned)`.
+A store through a pointer, a global, a goto: all raise Unsupported, and the probe fails rather than
+passing a fixture it could not read. So a fixture is a sub whose result depends on its arguments and
+ROM alone.
 
 Usage:
   py -3.14 -m emu_harness.vm.koei.nes.gates.value_probe [-v]      # NA1's fixtures; exit 1 on a mismatch
@@ -35,6 +38,8 @@ from pathlib import Path
 EDGE = (0, 1, 5, 0x7FFF, 0x8000, 0xFFFF)
 XY = (0, 2, 3, 4, 5, 10, 11, 0xFFFF)
 BITS = (0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80)
+CHARS = (0, 0x20, 0x2F, 0x30, 0x39, 0x3A, 0x40, 0x41, 0x5A, 0x5B, 0x60, 0x61, 0x7A, 0x7B, 0xFF)
+STRINGS = (0xF695, 0xF6ED, 0xF706, 0xF707, 0xF735, 0xF74F)         # NA1 fixed-bank text; $F707 is one in
 
 # (name, bank, stub, argument grid). Each is pure in its arguments, or reads only ROM-initial state
 # through a callee the ROM also runs.
@@ -45,6 +50,25 @@ FIXTURES = {
         ("is_tile_in_bounds", 2, 0x8F11, [XY, XY]),                # && fold, unsigned bounds
         ("unit_strength_ptr", 2, 0x82C9, [EDGE, EDGE]),            # non-commutative arithmetic
         ("is_cell_clear_of_bits", 2, 0x82DB, [XY, XY, BITS]),      # inverted || ; read_map_cell(x, y) order
+        ("abs16", 15, 0xCB4C, [EDGE]),                             # negation, signed test
+        ("is_digit", 15, 0xCA65, [CHARS]),                         # unsigned && range
+        ("wrap_index_0_2_to_zero", 2, 0x900A, [EDGE]),             # store to an argument
+        ("clamp_value_to_range", 0, 0x91FD, [EDGE, EDGE, EDGE]),   # argument order, nested else
+        ("stat_above_threshold_and_gap_predicate", 0, 0x8FE0,      # !(A || !B)
+         [(0, 20, 25, 26, 31, 32, 100, 0xFFFF)] * 2),
+        ("effect_send", 1, 0x8BE5, [EDGE, EDGE, EDGE]),            # non-commutative, wrapped subtract
+        ("relations_matrix_cell_addr", 0, 0x8C35, [(0, 1, 5, 53)] * 2),
+        ("unit_col_ptr", 2, 0x828B, [EDGE, EDGE]),
+        ("unit_row_ptr", 2, 0x829A, [EDGE, EDGE]),
+        ("side_resource_ptr", 2, 0x827E, [EDGE]),                  # a row of a 2-D table
+        ("count_decimal_digits", 15, 0xD586,                       # while, signed /
+         [(0, 9, 10, 99, 100, 999, 1000, 9999, 10000, 0x7FFF, 0x8000, 0xFFFF)]),
+        ("pct_op", 15, 0xD70D, [(0, 1, 9, 10, 55, 99, 100, 999, 1640, 9999, 0xFFFF),   # nested / and %
+                                (0, 1, 5, 9, 10, 33, 50, 99, 100, 101)]),
+        ("weighted_average_capped", 15, 0xDA24,                    # five arguments in order, nested calls
+         [(0, 50, 999), (41, 59), (1, 30), (0, 55), (100, 1640)]),
+        ("strlen", 15, 0xCA7E, [STRINGS]),                         # while over ROM bytes
+        ("strcmp", 15, 0xCAB0, [STRINGS, STRINGS]),                # continue / break, byte order
     ],
 }
 
@@ -55,7 +79,9 @@ class Unsupported(Exception):
 
 _TOK = re.compile(r"\s*(0x[0-9A-Fa-f]+|\d+|[A-Za-z_]\w*|<<|>>|<=|>=|==|!=|&&|\|\||[-+*/%<>&|^!~?:(),])")
 _BINARY = [("||",), ("&&",), ("|",), ("^",), ("&",), ("==", "!="), ("<", "<=", ">", ">="), ("<<", ">>"),
-           ("+", "-"), ("*",)]
+           ("+", "-"), ("*", "/", "%")]
+_LOCAL = re.compile(r"arg\d+|local\d+|phi_\w+")
+_LOOP_LIMIT = 100000
 _CASTS = {"unsigned", "word", "sword"}
 
 
@@ -74,8 +100,8 @@ def _tokens(s):
 class _Parser:
     """Recursive descent over C precedence -> a closure env -> (value16, unsigned_flag)."""
 
-    def __init__(self, toks, call):
-        self.t, self.i, self.call = toks, 0, call
+    def __init__(self, toks, call, mem=None):
+        self.t, self.i, self.call, self.mem = toks, 0, call, mem
 
     def peek(self, k=0):
         return self.t[self.i + k] if self.i + k < len(self.t) else None
@@ -125,6 +151,14 @@ class _Parser:
             self.take(); kind = self.take(); self.take(")")
             e = self.unary()
             return lambda env: (e(env)[0], kind == "unsigned")
+        if tok == "*" and self.mem is not None and self.peek(1) == "(" and self.peek(2) in ("byte", "word") \
+                and self.peek(3) == "*" and self.peek(4) == ")":
+            self.take(); self.take(); width = self.take(); self.take(); self.take()
+            e = self.unary()
+            read = self.mem
+            if width == "byte":
+                return lambda env: (read(e(env)[0]), False)
+            return lambda env: (read(e(env)[0]) | read((e(env)[0] + 1) & 0xFFFF) << 8, False)
         if tok in ("*", "&"):
             raise Unsupported("memory access")
         return self.primary()
@@ -148,9 +182,13 @@ class _Parser:
                     self.take(",")
             self.take(")")
             return lambda env, name=tok: (self.call(name, [a(env)[0] for a in args]) & 0xFFFF, False)
-        if re.fullmatch(r"arg\d+", tok):
-            return lambda env: (env[tok], False)
-        raise Unsupported(f"identifier {tok!r} (a global or local)")
+        if _LOCAL.fullmatch(tok):
+            def read(env):
+                if tok not in env:
+                    raise Unsupported(f"{tok} read before it is set")
+                return (env[tok], False)
+            return read
+        raise Unsupported(f"identifier {tok!r} (a global)")
 
 
 def _truth(v):
@@ -172,14 +210,21 @@ def _binop(op, l, r):
         if op in ("<", "<=", ">", ">=", "==", "!="):
             x, y = (a, b) if (ua or ub) else (_s(a), _s(b))
             return (int({"<": x < y, "<=": x <= y, ">": x > y, ">=": x >= y, "==": x == y, "!=": x != y}[op]), False)
+        if op in ("/", "%"):
+            if b == 0:
+                raise Unsupported("divide by zero: the C has no value here; keep it off the grid")
+            x, y = (a, b) if (ua or ub) else (_s(a), _s(b))
+            q = abs(x) // abs(y) * (1 if (x < 0) == (y < 0) else -1)     # C truncates toward zero
+            return ((q if op == "/" else x - q * y) & 0xFFFF, False)
         v = {"+": a + b, "-": a - b, "*": a * b, "<<": a << (b & 15), ">>": a >> (b & 15),
              "&": a & b, "|": a | b, "^": a ^ b}[op]
         return (v & 0xFFFF, False)
     return f
 
 
-def compile_sub(c_text, call):
-    """The C of one sub -> (name, nargs, fn(args) -> word). Raises Unsupported."""
+def compile_sub(c_text, call, mem=None):
+    """The C of one sub -> (name, nargs, fn(args) -> word). Raises Unsupported. `mem(addr)` -> byte
+    enables the *(byte*) / *(word*) reads."""
     lines = [re.sub(r"//.*", "", ln).strip() for ln in c_text.splitlines()]
     lines = [ln for ln in lines if ln]
     head = next((ln for ln in lines if re.match(r"word \w+\(", ln)), None)
@@ -192,7 +237,7 @@ def compile_sub(c_text, call):
     body = lines[lines.index(head) + 1:]
     if not body or body[-1] != "}":
         raise Unsupported("body does not close")
-    expr = lambda s: _Parser(_tokens(s), call).parse()
+    expr = lambda s: _Parser(_tokens(s), call, mem).parse()
 
     def block(i, top):
         """Statements from body[i] to the brace that closes this block -> (stmts, index of it)."""
@@ -204,6 +249,29 @@ def compile_sub(c_text, call):
             g = re.fullmatch(r"if \((.*)\) return (.*);", ln)
             if g:
                 stmts.append(("if", expr(g.group(1)), [("ret", expr(g.group(2)))], []))
+                i += 1; continue
+            g = re.fullmatch(r"if \((.*)\) (break|continue);", ln)
+            if g:
+                stmts.append(("if", expr(g.group(1)), [(g.group(2),)], []))
+                i += 1; continue
+            if ln in ("break;", "continue;"):
+                stmts.append((ln[:-1],))
+                i += 1; continue
+            g = re.fullmatch(r"while \((.*)\) \{", ln)
+            if g:
+                loop, i = block(i + 1, False)
+                if body[i] != "}":
+                    raise Unsupported(f"while closes with {body[i]!r}")
+                stmts.append(("while", expr(g.group(1)), loop))
+                i += 1; continue
+            g = re.fullmatch(r"(\w+) = (.*);", ln)
+            if g:
+                if not _LOCAL.fullmatch(g.group(1)):
+                    raise Unsupported(f"store to {g.group(1)!r} (a global)")
+                stmts.append(("set", g.group(1), expr(g.group(2))))
+                i += 1; continue
+            if re.fullmatch(r"\w+\(.*\);", ln):
+                stmts.append(("do", expr(ln[:-1])))
                 i += 1; continue
             g = re.fullmatch(r"return (.*);", ln)
             if g:
@@ -239,18 +307,37 @@ def compile_sub(c_text, call):
         raise Unsupported(f"stray {body[end]!r}")
 
     def execute(stmts, env):
+        """-> None to fall through, a word to return, or the string break / continue."""
         for s in stmts:
             if s[0] == "ret":
                 return s[1](env)[0]
-            v = execute(s[2] if _truth(s[1](env)) else s[3], env)
-            if v is not None:
-                return v
+            if s[0] in ("break", "continue"):
+                return s[0]
+            if s[0] == "set":
+                env[s[1]] = s[2](env)[0]
+            elif s[0] == "do":
+                s[1](env)
+            elif s[0] == "while":
+                for _ in range(_LOOP_LIMIT):
+                    if not _truth(s[1](env)):
+                        break
+                    v = execute(s[2], env)
+                    if v == "break":
+                        break
+                    if v is not None and v != "continue":
+                        return v
+                else:
+                    raise Unsupported(f"loop ran past {_LOOP_LIMIT}")
+            else:
+                v = execute(s[2] if _truth(s[1](env)) else s[3], env)
+                if v is not None:
+                    return v
         return None
 
     def run(args):
         env = {f"arg{i + 1}": a & 0xFFFF for i, a in enumerate(args)}
         v = execute(stmts, env)
-        if v is None:
+        if v is None or isinstance(v, str):
             raise Unsupported("fell off the end")
         return v
     return m.group(1), nargs, run
@@ -274,10 +361,12 @@ def rendered_c(game, bank, stub):
 
 def check(game="na1", verbose=False):
     """-> list of (fixture, problem). Empty = every fixture's C equals the ROM on its grid."""
-    from emu_harness.vm.koei.nes.titles import run_sub
+    from emu_harness.vm.koei.nes.titles import make_vm, run_sub
     bad = []
     for name, bank, stub, grid in FIXTURES[game]:
         c_text, labs = rendered_c(game, bank, stub)
+        vm, _cfg = make_vm(game)
+        vm.switch_bank(bank)
         by_name = {n: a for a, (n, _c) in labs.items()}
 
         def call(fn, args, bank=bank):
@@ -287,7 +376,7 @@ def check(game="na1", verbose=False):
                 raise Unsupported(f"call to unknown {fn}")
             return run_sub(game, addr, args, bank=bank)
         try:
-            _n, nargs, fn = compile_sub(c_text, call)
+            _n, nargs, fn = compile_sub(c_text, call, vm.mem.read)
             if nargs != len(grid):
                 raise Unsupported(f"{nargs} args, grid has {len(grid)}")
             misses = []

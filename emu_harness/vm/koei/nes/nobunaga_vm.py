@@ -389,6 +389,21 @@ class NobunagaVM:
                     )
                 return upcoming_op
 
+        # The same for CALL_abs ($AC), the 3-byte form with no arguments and no adj byte. Until
+        # 2026-11-04 only $E9 was intercepted, so a stub on a no-argument routine (confirm_prompt,
+        # prompt_y_n) was silently ignored and the routine ran.
+        if upcoming_op == 0xAC:
+            call_target = self.mem.read(pre_pc + 1) | (self.mem.read(pre_pc + 2) << 8)
+            if call_target in self.host_call_stubs:
+                stub_result = self.host_call_stubs[call_target](self)
+                if stub_result is not None:
+                    self.regL = stub_result & 0xFFFF
+                self.vm_pc = (pre_pc + 3) & 0xFFFF
+                if self.trace_enabled:
+                    name = self.label(call_target) or f"${call_target:04X}"
+                    self.trace_log.append(f"  ${pre_pc:04X}  STUB CALL {name}  -> regL=${self.regL:04X}")
+                return upcoming_op
+
         # Disasm for trace
         if self.trace_enabled:
             disasm, _ = self.disasm_at(pre_pc)
@@ -448,8 +463,8 @@ class NobunagaVM:
         return True
 
     def install_stub(self, target_addr, fn):
-        """Install a Python stub for CALL_abs_imm1 ($E9) to `target_addr`.
-        fn(vm) is called instead of executing the sub; if it returns an
+        """Install a Python stub for a call to `target_addr`, CALL_abs_imm1 ($E9) or
+        CALL_abs ($AC). fn(vm) is called instead of executing the sub; if it returns an
         integer, that becomes regL.
         """
         self.host_call_stubs[target_addr] = fn
@@ -615,6 +630,14 @@ class NobunagaVM:
                         adj = self.mem.read(vpc + 3)
                         self.vm_sp = (self.vm_sp + adj) & 0xFFFF
                         self.vm_pc = (vpc + 4) & 0xFFFF
+                        continue
+                if self.mem.read(vpc) == 0xAC:  # CALL_abs, no arguments
+                    tgt = self.mem.read(vpc + 1) | (self.mem.read(vpc + 2) << 8)
+                    if tgt in self.host_call_stubs:
+                        res = self.host_call_stubs[tgt](self)
+                        if res is not None:
+                            self.regL = res & 0xFFFF
+                        self.vm_pc = (vpc + 3) & 0xFFFF
                         continue
             self.cpu.step()
         # Leave the CPU at the dispatcher boundary for the caller's outer loop.

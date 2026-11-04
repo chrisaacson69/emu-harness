@@ -273,6 +273,23 @@ def test_byte_immediate_keeps_its_sign(tmp_path):
     assert re.search(r"local8 [!=]= -1\)", sub) and not re.search(r"local8 [!=]= 1\)", sub), sub
 
 
+def test_a_stub_intercepts_a_call_with_no_arguments():
+    """install_stub covers both call forms. NA1 driver_train reaches confirm_prompt ($D766) by
+    CALL_abs ($AC, no arguments) and message_display by CALL_abs_imm1 ($E9); before 2026-11-04 the
+    first stub was silently ignored and the routine ran, 60,000 VM ops of delay_loop included."""
+    from emu_harness.vm.koei.nes import titles
+    hits = []
+    vm, _cfg = titles.make_vm("na1")
+    vm.switch_bank(1)
+    vm.install_stub(0xD766, lambda v: hits.append("confirm") or 0)
+    vm.install_stub(0xD326, lambda v: hits.append("message") or 0)
+    vm.vm_fp, vm.vm_sp = 0x05FF, 0x05FF - 16
+    vm.vm_pc = 0xA6AA                                # message_display; confirm_prompt; ...
+    vm.cpu.pc = vm.DISPATCHER_ADDR
+    vm.run_until_outermost_return(max_ops=50)
+    assert hits == ["message", "confirm"]
+
+
 def test_value_probe_passes_and_planted_renderings_fail():
     """gates.value_probe evaluates the rendered C (DREAM's) against the ROM. It must pass on NA1, and
     fail when the renderer is given a wrong guard or call arguments in push order (fixed 2026-06-03,
@@ -289,10 +306,11 @@ def test_value_probe_passes_and_planted_renderings_fail():
     neg, enums = dream.neg, VC._apply_arg_enums
     try:
         dream.neg = lambda e: e
-        assert [n for n, _ in VP.check()] == ["is_cell_clear_of_bits"]
+        assert [n for n, _ in VP.check()] == ["is_cell_clear_of_bits", "clamp_value_to_range",
+                                              "stat_above_threshold_and_gap_predicate", "pct_op"]
         dream.neg = neg
         VC._apply_arg_enums = lambda f, a: enums(f, a)[::-1]
-        assert [n for n, _ in VP.check()] == ["is_cell_clear_of_bits"]
+        assert [n for n, _ in VP.check()] == ["is_cell_clear_of_bits", "weighted_average_capped"]
     finally:
         dream.neg, VC._apply_arg_enums = neg, enums
 
@@ -304,9 +322,30 @@ def test_value_probe_refuses_what_it_cannot_read():
     with pytest.raises(Unsupported):
         compile_sub("word f(word arg1) {\n    return *(byte*)(arg1);\n}\n", lambda n, a: 0)
     with pytest.raises(Unsupported):
-        compile_sub("word f(word arg1) {\n    local9 = arg1;\n    return local9;\n}\n", lambda n, a: 0)
+        compile_sub("word f(word arg1) {\n    fief_count = arg1;\n    return 0;\n}\n", lambda n, a: 0)
+    with pytest.raises(Unsupported):
+        compile_sub("word f(word arg1) {\n    return fief_count;\n}\n", lambda n, a: 0)
+    with pytest.raises(Unsupported):
+        compile_sub("word f(word arg1) {\n    goto L;\n    L:\n    return 0;\n}\n", lambda n, a: 0)
+    with pytest.raises(Unsupported):                                     # read before it is set
+        compile_sub("word f(word arg1) {\n    return local9;\n}\n", None)[2]((0,))
     _n, k, fn = compile_sub("word f(word arg1, word arg2) {\n    return ((arg1 < arg2) ? arg1 : arg2);\n}\n", None)
     assert k == 2 and fn((0xFFFF, 1)) == 0xFFFF and fn((5, 3)) == 3      # signed unless cast
+
+
+def test_value_probe_evaluates_locals_loops_and_rom_reads():
+    from emu_harness.vm.koei.nes.gates.value_probe import compile_sub, Unsupported
+    import pytest
+    count = ("word f(word arg1) {\n    local1 = 0;\n    while ((arg1 != 0)) {\n        arg1 = (arg1 / 10);\n"
+             "        local1 = (local1 + 1);\n        if ((local1 == 3)) break;\n    }\n    return local1;\n}\n")
+    fn = compile_sub(count, None)[2]
+    assert [fn((v,)) for v in (0, 9, 10, 99, 100, 5000)] == [0, 1, 2, 2, 3, 3]
+    div = compile_sub("word f(word arg1, word arg2) {\n    return (arg1 / arg2);\n}\n", None)[2]
+    assert div((0xFFF9, 2)) == 0xFFFD                                    # -7 / 2 = -3, toward zero
+    with pytest.raises(Unsupported):
+        div((1, 0))
+    rd = compile_sub("word f(word arg1) {\n    return *(word*)(arg1);\n}\n", None, {4: 0x34, 5: 0x12}.get)[2]
+    assert rd((4,)) == 0x1234
 
 
 def test_record_access_renders_c_struct_arrays_and_only_that_shape():

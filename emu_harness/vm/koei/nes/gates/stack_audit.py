@@ -118,7 +118,7 @@ def measure(vm, pc, op, valid_body=None):
         'regL_after': vm.regL,
         'regR_after': vm.regR,
         'sp0': sp0, 'operand1': operand1, 'operand_w': operand_w,
-        'stubbed': (op == 0xE9 and operand_w in vm.host_call_stubs),
+        'stubbed': (op in (0xE9, 0xAC) and operand_w in vm.host_call_stubs),
         'adj': vm.mem.read(pc + 3) if op == 0xE9 else None,
     }
     # value-check resolution
