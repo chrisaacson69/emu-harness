@@ -200,6 +200,36 @@ def build(bank_subs):
     return records, warnings
 
 
+def memory_map(decls):
+    """The per-bank files' declarations as one memory map. In a bank file `extern` says the table is
+    elsewhere; here nothing defines them, they are fixed addresses, so each line carries its address.
+    A name two banks declared in different shapes keeps the row form (`[][n]`), which says more;
+    until 2026-11-04 both printed, and C rejects that. -> lines."""
+    from emu_harness.vm.koei.nes import titles
+    cfg = _game_cfg("na1")
+    addr = {}
+    for bank in CODE_BANKS:
+        for a, (n, _c) in titles.bank_scoped_labels(cfg, bank).items():
+            addr.setdefault(n, (a, bank))
+    structs, tables = [], {}
+    for ln in decls:
+        m = re.match(r"extern (struct \w+|\w+) (\w+)((?:\[\d*\])+);", ln)
+        if not m:
+            structs.append(ln)
+            continue
+        kind, name, dims = m.groups()
+        old = tables.get(name)
+        if old is None or len(dims) > len(old[1]):
+            tables[name] = (kind, dims)
+    rows = []
+    for name, (kind, dims) in tables.items():
+        a, bank = addr.get(name, (None, None))
+        where = "" if a is None else f"${a:04X}" + (f" (bank {bank})" if 0x8000 <= a < 0xC000 else "")
+        rows.append((a if a is not None else 0x10000, f"{kind} {name}{dims};", where))
+    w = max(len(r[1]) for r in rows) if rows else 0
+    return structs + [f"{d:<{w}}    // {where}".rstrip(" /") for _a, d, where in sorted(rows)]
+
+
 def render(records, warnings, decls=()):
     L = [
         "// ============================================================",
@@ -220,7 +250,7 @@ def render(records, warnings, decls=()):
         "",
     ]
     if decls:
-        L += ["// ---- declarations (the union of the per-bank files') ----", *decls, ""]
+        L += ["// ---- memory map: fixed RAM and ROM tables, by address ----", *memory_map(decls), ""]
     for w in warnings:
         L.append(f"// WARNING: {w}")
     if warnings:
