@@ -916,9 +916,9 @@ def _natural_loops(tc, header):
         for src in list(latches) + [h]:
             outs = {s for s in cfg[src] if s != EXIT and s not in N}
             if outs:
-                if len(outs) > 1 or any(_is_sink(s) for s in outs):
-                    return None
-                fallout = next(iter(outs))
+                if len(outs) > 1:
+                    return None                       # (a lone sink is fine: an inner loop that
+                fallout = next(iter(outs))            # ends the outer body falls to its continue)
                 break
         # Every other exit target is an EARLY-EXIT block: absorb it into the body (to a fixpoint)
         # iff it is reached ONLY from the loop (all preds inside the region). Its own onward edges
@@ -938,6 +938,13 @@ def _natural_loops(tc, header):
                 if _is_sink(X):
                     bail = True                           # a synthetic sink = a multi-LEVEL break
                     break                                 # across an already-redirected boundary
+                if all(X in _dom.get(p, ()) for p in preds.get(X, set()) - N):
+                    # Every outside pred is X's own: X heads a loop reached only from here, the
+                    # early exit runs into it (prompt_new_game_or_load_save's retry loop leaving
+                    # through the palette do-while). Absorb it; the recursion peels the inner loop.
+                    N.add(X)
+                    changed = True
+                    continue
                 if not (preds.get(X, set()) <= N):
                     # X is reached from OUTSIDE the loop too -> a shared post-loop merge, not a
                     # loop-only early-exit. It can't be absorbed (that would pull outer code in),
@@ -957,7 +964,8 @@ def _natural_loops(tc, header):
             gotos = set()
         loops.append({'h': h, 'nodes': frozenset(N), 'latches': frozenset(latches),
                       'exit': fallout, 'gotos': frozenset(gotos)})
-    return loops
+    return [lp for lp in loops                        # an absorbed loop is its absorber's now
+            if not any(o is not lp and lp['h'] in o['nodes'] for o in loops)]
 
 
 def _region_tc(base, nodes, header, exit_target):
@@ -1395,6 +1403,7 @@ def _ast_cfg(ast, tc):
     contains a node that can't be placed in a block-CFG."""
     EXIT = vm_cfg.EXIT
     edges, orient = {}, {}
+    after = []                                        # what follows each enclosing loop / switch
 
     def build(seq, fall):
         cont = fall
@@ -1413,7 +1422,9 @@ def _ast_cfg(ast, tc):
         if k == 'continue':                           # back-edge → the loop header
             return node[1]
         if k == 'break':                              # exit edge → past the loop / switch merge
-            return node[1]
+            # A sink target is the enclosing region's boundary (an inner loop ending the outer body):
+            # no block carries it, and a C `break` lands on what follows the loop, so resolve to that.
+            return after[-1] if _is_sink(node[1]) and after else node[1]
         if k == 'fallthrough':                        # switch case → the next case (real block)
             return node[1]
         if k == 'gotosink':                           # re-shared sink: route to the kept copy of
@@ -1425,13 +1436,19 @@ def _ast_cfg(ast, tc):
             # markers carry their own real targets. Building the body sets every loop block's
             # REAL edges, so the lowered CFG is cyclic exactly like the witness. Entry == h.
             _, h, body = node
-            return build(body, h)
+            after.append(cont)
+            try:
+                return build(body, h)
+            finally:
+                after.pop()
         if k == 'switch':
             # The switch block S branches to each case body's entry (= its target block); break /
             # fall-through markers carry the real merge / next-case targets. So edges[S] is exactly
             # the raw `case k: goto L` target set, and each case body sets its own blocks' edges.
             _, S, _head, _sel, cases, _merge = node
+            after.append(cont)
             entries = {build(body, cont) for _labs, body in cases}
+            after.pop()
             edges[S] = frozenset(entries)
             return S
         if k == 'guard':

@@ -354,6 +354,58 @@ def test_the_gate_sees_a_block_skipped_forward():
     assert vm_cfg.lower_struct_cfg(lines, leaders)[0x10] == frozenset({0x30})
 
 
+def _na1_collect(bank, sub):
+    import contextlib, io, tempfile
+    from pathlib import Path
+    from emu_harness.vm.koei.nes import titles
+    VC, _c, labs, _s = titles.decompiler_for("na1", bank)
+    asm = Path(tempfile.mkdtemp()) / "b.asm"
+    with contextlib.redirect_stdout(io.StringIO()):
+        titles.disasm("na1", bank, str(asm))
+    col = {}
+    with contextlib.redirect_stdout(io.StringIO()):
+        VC.decompile(str(asm), sub, labels=labs, collect=col)
+    return col
+
+
+def test_dream_owns_a_loop_exiting_into_a_loop_and_an_inner_loop_ending_the_body():
+    """prompt_new_game_or_load_save: the retry loop leaves through the palette do-while, whose only
+    outside pred is its own latch. delay_loop: the inner loop's one exit is the outer continue."""
+    import pytest
+    from emu_harness.vm.koei.nes import titles
+    if not titles.game_cfg("na1")["_rom"].exists():
+        pytest.skip("na1-decompiler ROM not present")
+    for bank, sub in ((0, 0x821E), (15, 0xD73E)):
+        col = _na1_collect(bank, sub)
+        assert col["structurer"] == "dream"
+        assert not any("goto " in t for _a, _i, t in col["structured"])
+
+
+def test_the_ast_gate_still_rejects_a_wrong_loop_exit():
+    """A sink break resolves to what follows the loop, so that continuation has to be right:
+    turning delay_loop's `continue` into a `break` leaves the loop early and must fail."""
+    import pytest
+    from emu_harness.vm.koei.nes import dream, titles
+    if not titles.game_cfg("na1")["_rom"].exists():
+        pytest.skip("na1-decompiler ROM not present")
+    col = _na1_collect(15, 0xD73E)
+    ast, tc, _nxt = dream.dream_ast(col["raw"], col["instructions"])
+    assert dream.dream_equivalent_ast(col["raw"], ast, tc, tc["leaders"])
+    seen = []
+
+    def plant(x):
+        if isinstance(x, list):
+            return [plant(i) for i in x]
+        if isinstance(x, tuple):
+            if x and x[0] == "continue":
+                seen.append(x)
+                return ("break", dream.CONT_SINK)
+            return tuple(plant(i) for i in x)
+        return x
+    bad = plant(ast)
+    assert seen and not dream.dream_equivalent_ast(col["raw"], bad, tc, tc["leaders"])
+
+
 def test_value_probe_passes_and_planted_renderings_fail():
     """gates.value_probe evaluates the rendered C (DREAM's) against the ROM. It must pass on NA1, and
     fail when the renderer is given a wrong guard or call arguments in push order (fixed 2026-06-03,
