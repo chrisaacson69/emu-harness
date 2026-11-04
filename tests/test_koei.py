@@ -290,6 +290,25 @@ def test_a_stub_intercepts_a_call_with_no_arguments():
     assert hits == ["message", "confirm"]
 
 
+def test_a_native_callee_is_no_call_level():
+    """sqrt_int ($CBCD) is native, reached by a VM call opcode, and returns by RTS. The run must still
+    stop at the routine's own RETURN: develop_loyalty calls it once."""
+    from emu_harness.vm.koei.nes import titles
+    vm, _cfg = titles.make_vm("na1")
+    vm.switch_bank(1)
+    rec = 0x7001 + 7 * 26
+    vm.mem.write_word(rec + 24, 1640)                # stat_cap
+    vm.mem.write(0x6D63, 2)                          # skill_level
+    vm.vm_fp, vm.vm_sp = 0x05FF, 0x05FF - 16
+    vm.mem.write_word(0x05FF + 11, rec)
+    vm.mem.write_word(0x05FF + 13, 50)
+    vm.vm_pc = 0x8922                                # develop_loyalty's body
+    vm.cpu.pc = vm.DISPATCHER_ADDR
+    assert vm.run_until_outermost_return(max_ops=5000) is True
+    assert vm.vm_call_depth == 0
+    assert vm.mem.read_word(rec + 12) > 0            # loyalty rose
+
+
 def test_value_probe_passes_and_planted_renderings_fail():
     """gates.value_probe evaluates the rendered C (DREAM's) against the ROM. It must pass on NA1, and
     fail when the renderer is given a wrong guard or call arguments in push order (fixed 2026-06-03,

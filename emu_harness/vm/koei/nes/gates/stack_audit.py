@@ -26,7 +26,8 @@ the callee is NOT run), so even those are safe to sample in isolation.
 Gate (see vm_stack_effect.py for the per-opcode claims):
   data/push/pop/store/control : observed dSP == 2*(pops-pushes) AND every 'keep' reg is
                                 unchanged; plus targeted value-checks (qimm/abs).
-  call                        : real call -> depth +1; host-stubbed $E9 -> depth 0 & dSP==adj.
+  call                        : real call -> depth +1; native callee -> depth 0;
+                                host-stubbed $E9 -> depth 0 & dSP==adj.
   return                      : depth -1 (frame teardown; dSP not asserted).
   probe                       : report-only — observed deltas printed, never fails the gate
                                 (ambiguous/unmodeled/dead/syscall/ext-prefix opcodes).
@@ -120,6 +121,8 @@ def measure(vm, pc, op, valid_body=None):
         'sp0': sp0, 'operand1': operand1, 'operand_w': operand_w,
         'stubbed': (op in (0xE9, 0xAC) and operand_w in vm.host_call_stubs),
         'adj': vm.mem.read(pc + 3) if op == 0xE9 else None,
+        # control came straight back to the next instruction: the callee was native (sqrt_int)
+        'native': vm.vm_pc == pc + vm.VM_CALL_LENGTH.get(op, -1),
     }
     # value-check resolution
     vc = eff.vcheck if eff else None
@@ -159,6 +162,9 @@ def gate(op, eff, obs):
             if obs['dsp'] != obs['adj']:
                 return False, f"stub dSP={obs['dsp']} != adj={obs['adj']}"
             return True, ''
+        if obs['native']:                     # runs to its RTS inside the op: no VM level
+            return (obs['ddepth'] == 0), (f"native call ddepth={obs['ddepth']} (want 0)"
+                                          if obs['ddepth'] != 0 else '')
         return (obs['ddepth'] == 1), (f"real call ddepth={obs['ddepth']} (want +1)"
                                       if obs['ddepth'] != 1 else '')
     if cls == 'return':

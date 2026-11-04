@@ -235,6 +235,7 @@ class NobunagaVM:
 
     # VM opcodes that perform a VM-level CALL (increase call depth by 1)
     VM_CALL_OPCODES = {0xAC, 0xDD, 0xE9, 0xEA}
+    VM_CALL_LENGTH = {0xAC: 3, 0xDD: 1, 0xE9: 4, 0xEA: 2}     # bytes, to the next instruction
     # VM opcode that performs a VM-level RETURN (decrease call depth by 1)
     VM_RETURN_OPCODE = 0xCF
 
@@ -425,6 +426,11 @@ class NobunagaVM:
                     self.trace_log.append(
                         f"  ${pre_pc:04X}  {depth_marker}{disasm:<38}  -> {state}"
                     )
+                # A call to native code (sqrt_int) runs to its RTS inside this one op and never
+                # reaches a VM RETURN, so it is no level. Counting it (until 2026-11-04) left the
+                # outermost RETURN unrecognized: the run went off the end of the routine.
+                if self.vm_pc == pre_pc + self.VM_CALL_LENGTH.get(upcoming_op, -1):
+                    self.vm_call_depth -= 1
                 return upcoming_op
         return None
 
