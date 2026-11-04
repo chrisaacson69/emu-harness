@@ -1790,3 +1790,4 @@ entries, where they are closed. First project: game-annotation (Mappy).
   is repointed at that project's revisit: koei-snes after AeroBiz; koei-nes after UW, ro3k,
   GemFire and rot3k2. Mappy's `var_xref` was repointed here (output identical).
 - UW-decompile: GitHub remote, public or private? (Its siblings GemFire and LEmp are public.)
+- Regen at each title's revisit, not in bulk (Chris, 2026-11-04). The committed C of the sibling titles is June-era (a trial: gotos about halve, ro3k 1,282 to 616), so a regen belongs with that title's labels and tools. On the liveness engine, subs that gain a value the old repair missed: rot3k2 161, na2 124, lemp 92, uw 72, gemfire 37, bk 27, gk 20, ro3k 19, so rules read from their old C are suspect until then. Each revisit runs `gates.value_merges --game <title>`: ro3k has 2 open ($9B4C, $CFEC, unread). Regen notes: gk's headers carry a `../../` listing path; na2's `all_banks.c` has no generator here; lemp commits no C.
