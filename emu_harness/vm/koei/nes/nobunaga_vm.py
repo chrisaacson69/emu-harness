@@ -230,6 +230,13 @@ _lengths_from_the_shared_table()
 # VM Runner
 # ============================================================================
 
+def rom_rng_step(state: int) -> int:
+    """syscall_rng_next $C1C3: set the low bit, multiply by the 48-bit constant at $C226 and negate.
+    The word returned is the top 16 bits less the sign. On the machine the state is also the
+    wall clock, so frames move it between calls."""
+    return -((state | 1) * 0xE0900E0187C5) & 0xFFFFFFFFFFFF
+
+
 class NobunagaVM:
     DISPATCHER_ADDR = 0xE867
 
@@ -252,6 +259,7 @@ class NobunagaVM:
         self.syscall_log = []      # (task, name, kind) for each $F226 dispatch — observability
         self.native_syscalls = set()  # tasks run by the ROM's own handler (see _native_syscall)
         self._rng = 0x1234         # deterministic RNG state for syscall_rng_next
+        self.rom_rng = None        # a 48-bit state: run the ROM's generator, not the stand-in LCG
         self.install_stub(0xF226, self._syscall_dispatch)  # kernel syscall dispatch ($F226)
 
         # Initialize VM zero-page state
@@ -543,8 +551,14 @@ class NobunagaVM:
             # negatives (e.g. -13752 smod 10 = -2). Mask to 15 bits so the value is always
             # non-negative as signed -> rng_mod(n) yields a clean 0..n-1 for every modulus
             # the game uses (<= ~2025). brk_scratch is kept in sync for any direct readers.
-            self._rng = (self._rng * 1103515245 + 12345) & 0xFFFF
-            val = self._rng & 0x7FFF
+            if self.rom_rng is None:
+                # A stand-in. Its low bit alternates, so rng_mod(2) is no coin: use rom_rng
+                # for anything that reads a distribution of outcomes.
+                self._rng = (self._rng * 1103515245 + 12345) & 0xFFFF
+                val = self._rng & 0x7FFF
+            else:
+                self.rom_rng = rom_rng_step(self.rom_rng)
+                val = (self.rom_rng >> 32) & 0x7FFF
             self.mem.write(0x66, val & 0xFF); self.mem.write(0x67, val >> 8)
             self.syscall_log.append((task, name, kind))
             return val
